@@ -84,3 +84,13 @@ The daemon-produced bundle was evaluated without DOM/Worker globals and rendered
 - Host UI checks primarily used untracked additions. Old-side replacements are covered by real-parser/comment-anchor tests, rather than the full host UI matrix.
 - Save conflict detection is optimistic; arbitrary external writers do not share a lock.
 - Newer Paseo/Pierre versions and completely disconnected operation require separate verification.
+
+## Folder line counts — 2026-10-22
+
+Folder rows now sum addition/deletion counts from their visible descendant files, including nested folders. They reuse file-row colors, number formatting, and zero-side omission. Search and Unviewed only use the same filtered file set; unsupported files do not contribute counts. Folder names retain ellipsis and a native disclosure marker, and accessible labels include the full folder path and totals.
+
+`vp check` passed and the plugin reload reported running. In the real Paseo panel through the official web client, a disposable nested fixture with two- and three-line files produced +5 on its parent and +3 on its nested folder. A binary-only child folder displayed no invented count. Collapsing/reopening retained the parent total, and filtering to the three-line file changed all three ancestor totals to +3. Existing tracked changes displayed matching positive/negative totals on their parent folders. A screenshot confirmed row alignment and visible disclosure markers. The fixture was removed and the filter cleared; no Viewed markers, comments, or source files were changed through the UI.
+
+## Header count order — 2026-10-22
+
+The panel's renderer CSS places the existing additions counter before deletions in file headers, matching the file tree. This overrides Pierre's default visual order without replacing its counters or modifying the dependency. `vp check` passed, the scoped plugin reload reported running, and rendered counter positions were checked in the actual Paseo web panel for unified, split, and collapsed headers. Layout was restored to unified with files expanded; no edits, comments, or Viewed markers were saved through the UI.

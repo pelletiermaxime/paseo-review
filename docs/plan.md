@@ -6,7 +6,7 @@ Workspace Review is a standalone Paseo workspace panel for reviewing local chang
 
 - Target Paseo **0.12.0**, with the manifest and SDK pinned to that version. Register a separate panel through the public `addWorkspacePanel`/`openPanel` APIs.
 - Compare **HEAD → worktree**, including staged, unstaged, and untracked files. Load complete original/current contents. Present renames as deletion and addition; support unborn repositories.
-- Show a searchable changed-file tree with addition/deletion counts beside one scrolling diff surface. Provide unified/split layouts, sticky file headers, per-file collapse, Collapse all/Expand all, and line wrapping enabled by default.
+- Show a searchable changed-file tree with addition/deletion counts on files and cumulative counts on folders beside one scrolling diff surface. Folder totals include visible descendants and follow the active filters. Provide unified/split layouts, sticky file headers, per-file collapse, Collapse all/Expand all, and line wrapping enabled by default.
 - Keep the current scroll position when collapsing a file whose original header is visible. Return to its header when collapsing through a pinned header whose original position is outside the viewport.
 - Persist Viewed markers daemon-side for the exact displayed per-file diff. Marking Viewed collapses that file and returns to its own header. Opening, returning to, or refreshing the panel collapses Viewed files while retaining drafts.
 - Offer explicit Edit, Save, and Cancel for the current side. Preserve drafts through collapse, filtering, virtualization, and panel remounts during the client plugin lifetime. Reloading the plugin/client or restarting the app loses in-memory drafts.

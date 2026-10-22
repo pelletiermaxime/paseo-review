@@ -536,7 +536,8 @@ export async function mountReview(host: HTMLElement, bridge: Bridge): Promise<()
   }
   const options: CodeViewOptions<CommentAnnotation, undefined> = {
     stickyHeaders: true,
-    unsafeCSS: "[data-diffs-header] { cursor: pointer; }",
+    unsafeCSS:
+      "[data-diffs-header] { cursor: pointer; } [data-metadata] > [data-additions-count] { order: -1; }",
     overflow,
     enableGutterUtility: true,
     enableLineSelection: true,
@@ -596,6 +597,25 @@ export async function mountReview(host: HTMLElement, bridge: Bridge): Promise<()
     wasVisible = visible;
   });
   visibility.observe(root);
+
+  function appendLineCounts(row: HTMLElement, additions: number, deletions: number) {
+    const counts = document.createElement("span");
+    counts.style.cssText =
+      "display:flex;gap:5px;flex-shrink:0;font-size:12px;font-variant-numeric:tabular-nums";
+    const added = document.createElement("span");
+    added.dataset.additionsCount = "";
+    added.textContent = `+${additions}`;
+    added.style.color = bridge.colors.statusSuccess;
+    const removed = document.createElement("span");
+    removed.dataset.deletionsCount = "";
+    removed.textContent = `−${deletions}`;
+    removed.style.color = bridge.colors.statusDanger;
+    if (additions > 0 || deletions === 0) counts.append(added);
+    if (deletions > 0 || additions === 0) counts.append(removed);
+    counts.setAttribute("aria-hidden", "true");
+    row.append(counts);
+  }
+
   function render() {
     if (disposed || !snapshot) return;
     comments.refresh();
@@ -611,19 +631,47 @@ export async function mountReview(host: HTMLElement, bridge: Bridge): Promise<()
     visiblePaths = visible.map((file) => file.path);
     tree.replaceChildren();
     const folders = new Map<string, HTMLElement>([["", tree]]);
+    const folderCounts = new Map<
+      string,
+      {
+        summary: HTMLElement;
+        row: HTMLElement;
+        additions: number;
+        deletions: number;
+        reviewable: boolean;
+      }
+    >();
     for (const file of visible) {
       const parts = file.path.split("/");
+      const ancestors: string[] = [];
       let prefix = "";
       let parent: HTMLElement = tree;
       for (const part of parts.slice(0, -1)) {
         prefix += part + "/";
+        ancestors.push(prefix);
         let folder = folders.get(prefix);
         if (!folder) {
           const details = document.createElement("details");
           details.open = true;
           const summary = document.createElement("summary");
-          summary.textContent = part;
           summary.style.cssText = "cursor:pointer;padding:3px 0";
+          summary.setAttribute("aria-label", prefix.slice(0, -1));
+          const row = document.createElement("span");
+          row.style.cssText =
+            "display:inline-flex;align-items:center;gap:8px;width:calc(100% - 18px);vertical-align:middle";
+          const name = document.createElement("span");
+          name.textContent = part;
+          name.style.cssText =
+            "flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap";
+          row.append(name);
+          summary.append(row);
+          folderCounts.set(prefix, {
+            summary,
+            row,
+            additions: 0,
+            deletions: 0,
+            reviewable: false,
+          });
           folder = document.createElement("div");
           folder.style.paddingLeft = "12px";
           details.append(summary, folder);
@@ -684,27 +732,27 @@ export async function mountReview(host: HTMLElement, bridge: Bridge): Promise<()
           additions += hunk.additionLines;
           deletions += hunk.deletionLines;
         }
-        const counts = document.createElement("span");
-        counts.style.cssText =
-          "display:flex;gap:5px;flex-shrink:0;font-size:12px;font-variant-numeric:tabular-nums";
-        const added = document.createElement("span");
-        added.dataset.additionsCount = "";
-        added.textContent = `+${additions}`;
-        added.style.color = bridge.colors.statusSuccess;
-        const removed = document.createElement("span");
-        removed.dataset.deletionsCount = "";
-        removed.textContent = `−${deletions}`;
-        removed.style.color = bridge.colors.statusDanger;
-        if (additions > 0 || deletions === 0) counts.append(added);
-        if (deletions > 0 || additions === 0) counts.append(removed);
-        counts.setAttribute("aria-hidden", "true");
-        jump.append(counts);
+        appendLineCounts(jump, additions, deletions);
+        for (const path of ancestors) {
+          const counts = folderCounts.get(path)!;
+          counts.reviewable = true;
+          counts.additions += additions;
+          counts.deletions += deletions;
+        }
         jump.setAttribute(
           "aria-label",
           `${file.path}${file.viewed ? ", Viewed" : ""}, ${additions} added lines, ${deletions} removed lines`,
         );
       }
       parent.append(jump);
+    }
+    for (const [path, counts] of folderCounts) {
+      if (!counts.reviewable) continue;
+      appendLineCounts(counts.row, counts.additions, counts.deletions);
+      counts.summary.setAttribute(
+        "aria-label",
+        `${path.slice(0, -1)}, ${counts.additions} added lines, ${counts.deletions} removed lines`,
+      );
     }
     viewer.setItems(
       visible.map((file) => {
