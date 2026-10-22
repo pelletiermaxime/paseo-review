@@ -4,7 +4,7 @@ Evidence collected with Paseo **0.12.0** and **@pierre/diffs 1.5.2** on 2026-10-
 
 ## Automated checks
 
-`vp check` passed formatting, lint, and TypeScript checks. `vp run test` passed **19 tests across five files**, including the generated-worker consistency check.
+`vp check` passed formatting, lint, and TypeScript checks. `vp run test` passed **23 tests across five files**, including the generated-worker consistency check.
 
 Coverage includes:
 
@@ -17,7 +17,7 @@ Coverage includes:
 - Exact readable review messages for multiple old/new-side comments, paths with spaces, and multiline bodies; unchanged structured attachments and unavailable-recipient rejection.
 - Real worker-engine integration through Pierre's manager: highlighting, repeated-result reuse, changed-content keys, LRU eviction, and render-option invalidation. A small Node/browser messaging adapter is used for this test.
 
-Service tests use disposable unborn repositories and state stores, without creating commits. They do not by themselves establish tracked-HEAD host UI behavior.
+Service tests use disposable repositories and state stores, including unborn repositories and tree-valued HEAD fixtures for tracked contents, without creating commits. Host rename behavior was also exercised against a real commit-backed HEAD as described below.
 
 A clean copy installed successfully from the frozen lockfile and passed the same checks. The generated asset is also parsed to reject executable imports and the unused alternate engine.
 
@@ -94,3 +94,13 @@ Folder rows now sum addition/deletion counts from their visible descendant files
 ## Header count order — 2026-10-22
 
 The panel's renderer CSS places the existing additions counter before deletions in file headers, matching the file tree. This overrides Pierre's default visual order without replacing its counters or modifying the dependency. `vp check` passed, the scoped plugin reload reported running, and rendered counter positions were checked in the actual Paseo web panel for unified, split, and collapsed headers. Layout was restored to unified with files expanded; no edits, comments, or Viewed markers were saved through the UI.
+
+## Rename detection — 2026-10-22
+
+Supported added/deleted text captures are matched with Git's no-index rename detector at 50% similarity, including empty files. Matching uses private temporary copies with synthetic names, a 500-candidate bound, and a ten-second subprocess timeout; copies are removed afterward. It never stages or writes repository objects. Unsupported content remains separate, copies are not inferred, and a failed comparison falls back to separate entries with a warning.
+
+A rename has one destination-keyed review entry with its original path/content, a rename-sensitive fingerprint, and destination save token. Pierre renders old → new paths and only changed lines. The tree shows R at the new location; search matches either path, and folder totals count the entry once there. Pure moves show no content changes. Their Edit action uses Pierre's full-file editor because a zero-hunk diff has no body to attach the diff editor to.
+
+Automated tests cover staged pure/empty renames, an unstaged move with edits and special characters in the source path, unchanged real index/object counts, destination-only saves, external-edit conflicts, mode preservation, Viewed persistence/invalidation, and separate unrelated/copy/unsupported entries. Comment tests assert original/current paths on old/new sides while both use the destination review identity. All 23 tests and static checks pass.
+
+In the actual Paseo web panel on the 0.12.0 daemon, temporarily moved a tracked documentation file and verified one R entry and a pure-rename header. Edit opened the complete destination file; typing and explicit Save wrote only the destination. Disk readback matched, the original path stayed absent, and Refresh showed a rename with just +1 rather than a full addition/deletion. Searching the original name found the entry. Viewed saved and collapsed it; Unviewed only hid it. The marker was unchecked again. A new-side local comment used the destination path and was deleted without sending. The original documentation file was then restored byte-for-byte and the temporary directory removed. Old-side feedback paths and staged renames were verified by automated tests rather than live agent delivery or a staged host fixture.

@@ -35,6 +35,106 @@ async function fixture() {
   const service = new ReviewService(state);
   return { root, state, service };
 }
+
+async function baseline(root: string) {
+  await execute("git", ["-C", root, "add", "--all"]);
+  const { stdout } = await execute("git", ["-C", root, "write-tree"]);
+  // A tree-valued test ref supplies HEAD contents without creating commits.
+  await execute("git", ["-C", root, "update-ref", "refs/review-test/base", stdout.trim()]);
+  await execute("git", ["-C", root, "symbolic-ref", "HEAD", "refs/review-test/base"]);
+}
+
+it("pairs unstaged renames with edits without changing the index or object database", async () => {
+  const { root, service } = await fixture();
+  const source = 'old folder/é-[literal]\t".ts';
+  const destination = "new folder/renamed.ts";
+  await mkdir(path.join(root, "old folder"));
+  await mkdir(path.join(root, "new folder"));
+  const before = Array.from({ length: 20 }, (_, i) => `export const value${i} = ${i};\n`).join("");
+  const after = before.replace("value10 = 10", "value10 = 100");
+  await writeFile(path.join(root, source), before);
+  await baseline(root);
+  await rename(path.join(root, source), path.join(root, destination));
+  await writeFile(path.join(root, destination), after);
+  const index = await readFile(path.join(root, ".git/index"));
+  const objects = await execute("git", ["-C", root, "count-objects", "-v"]);
+  const snapshot = await service.snapshot("workspace", root);
+  expect(snapshot.files).toHaveLength(1);
+  expect(snapshot.files[0]).toMatchObject({
+    path: destination,
+    oldPath: source,
+    oldContents: before,
+    newContents: after,
+    kind: "renamed",
+    editable: true,
+  });
+  expect(await readFile(path.join(root, ".git/index"))).toEqual(index);
+  expect((await execute("git", ["-C", root, "count-objects", "-v"])).stdout).toBe(objects.stdout);
+  await service.viewed("workspace", snapshot.id, destination, true);
+  expect((await service.snapshot("workspace", root)).files[0]!.viewed).toBe(true);
+  await writeFile(path.join(root, destination), after + "// external edit\n");
+  await expect(
+    service.save("workspace", snapshot.id, destination, after + "draft\n"),
+  ).rejects.toThrow("File changed");
+  const changed = await service.snapshot("workspace", root);
+  expect(changed.files[0]!.viewed).toBe(false);
+  await service.save("workspace", changed.id, destination, after + "// saved\n");
+  expect(await readFile(path.join(root, destination), "utf8")).toBe(after + "// saved\n");
+  await expect(readFile(path.join(root, source))).rejects.toThrow();
+  await expect(service.save("workspace", changed.id, source, "wrong path\n")).rejects.toThrow(
+    "displayed snapshot",
+  );
+});
+
+it("detects staged pure and empty renames, preserving mode changes", async () => {
+  const { root, service } = await fixture();
+  await writeFile(path.join(root, "script.sh"), "echo hello\n");
+  await chmod(path.join(root, "script.sh"), 0o644);
+  await writeFile(path.join(root, "empty"), "");
+  await baseline(root);
+  await rename(path.join(root, "script.sh"), path.join(root, "moved.sh"));
+  await chmod(path.join(root, "moved.sh"), 0o755);
+  await rename(path.join(root, "empty"), path.join(root, "moved-empty"));
+  await execute("git", ["-C", root, "add", "--all"]);
+  const snapshot = await service.snapshot("workspace", root);
+  expect(snapshot.files).toHaveLength(2);
+  expect(snapshot.files.find((file) => file.path === "moved.sh")).toMatchObject({
+    oldPath: "script.sh",
+    kind: "renamed",
+    modeChange: "100644 → 100755",
+    oldContents: "echo hello\n",
+    newContents: "echo hello\n",
+  });
+  expect(snapshot.files.find((file) => file.path === "moved-empty")).toMatchObject({
+    oldPath: "empty",
+    kind: "renamed",
+    oldContents: "",
+    newContents: "",
+  });
+  await service.save("workspace", snapshot.id, "moved.sh", "echo edited\n");
+  expect((await stat(path.join(root, "moved.sh"))).mode & 0o777).toBe(0o755);
+});
+
+it("keeps unrelated additions/deletions, copies and unsupported files separate", async () => {
+  const { root, service } = await fixture();
+  await writeFile(path.join(root, "removed.txt"), "original unique contents\n");
+  await writeFile(path.join(root, "kept.txt"), "retained contents\n");
+  await writeFile(path.join(root, "binary-old"), Buffer.from([0, 1, 2]));
+  await baseline(root);
+  await rm(path.join(root, "removed.txt"));
+  await writeFile(path.join(root, "unrelated.txt"), "totally different text\n");
+  await writeFile(path.join(root, "copy.txt"), "retained contents\n");
+  await rename(path.join(root, "binary-old"), path.join(root, "binary-new"));
+  const snapshot = await service.snapshot("workspace", root);
+  expect(snapshot.files.every((file) => file.oldPath === null)).toBe(true);
+  expect(snapshot.files.find((file) => file.path === "removed.txt")?.kind).toBe("deleted");
+  expect(snapshot.files.find((file) => file.path === "copy.txt")?.kind).toBe("added");
+  expect(
+    snapshot.files
+      .filter((file) => file.path.startsWith("binary"))
+      .every((file) => !file.fingerprint),
+  ).toBe(true);
+});
 it("persists exact displayed file versions, independent of another file and workspace", async () => {
   const { root, state, service } = await fixture();
   await writeFile(path.join(root, "one.ts"), "one\n");

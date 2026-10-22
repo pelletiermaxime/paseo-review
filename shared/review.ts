@@ -4,6 +4,7 @@ import { z } from "zod";
 const workspace = z.object({ workspaceId: z.string().min(1).max(200) });
 const file = z.object({
   path: z.string(),
+  oldPath: z.string().nullable(),
   oldContents: z.string().nullable(),
   newContents: z.string().nullable(),
   fingerprint: z.string().nullable(),
@@ -11,7 +12,7 @@ const file = z.object({
   editable: z.boolean(),
   reason: z.string().nullable(),
   modeChange: z.string().nullable(),
-  kind: z.enum(["added", "modified", "deleted", "unsupported"]),
+  kind: z.enum(["added", "modified", "deleted", "renamed", "unsupported"]),
 });
 export const snapshotRpc = defineRpc({
   name: "review.snapshot",

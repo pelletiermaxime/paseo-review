@@ -305,6 +305,7 @@ export async function mountReview(host: HTMLElement, bridge: Bridge): Promise<()
     try {
       comments.add({
         id: crypto.randomUUID(),
+        path,
         root: snapshot.root,
         fingerprint: file.fingerprint,
         comment: lineComment(item.fileDiff, path, side, line),
@@ -447,6 +448,10 @@ export async function mountReview(host: HTMLElement, bridge: Bridge): Promise<()
     if (!snapshot || drafts.has(bridge.key) || busy || !file.editable || file.newContents === null)
       return;
     drafts.set(bridge.key, { snapshot, path: file.path, contents: file.newContents });
+    if (file.oldPath && file.oldContents === file.newContents) {
+      items.delete(file.path);
+      viewer.removeItem(file.path);
+    }
     collapsed.delete(file.path);
     updateFile(file.path);
     render();
@@ -456,6 +461,10 @@ export async function mountReview(host: HTMLElement, bridge: Bridge): Promise<()
   function cancel(file: ReviewFile) {
     if (busy) return;
     drafts.delete(bridge.key);
+    if (file.oldPath && file.oldContents === file.newContents) {
+      items.delete(file.path);
+      viewer.removeItem(file.path);
+    }
     updateFile(file.path);
     render();
     message(`Draft discarded: ${file.path}`);
@@ -492,6 +501,14 @@ export async function mountReview(host: HTMLElement, bridge: Bridge): Promise<()
   function header(file: ReviewFile) {
     const controls = document.createElement("div");
     controls.style.cssText = "display:flex;align-items:center;gap:8px;font:12px system-ui";
+    if (file.oldPath && file.oldContents === file.newContents) {
+      const renamed = document.createElement("span");
+      renamed.textContent =
+        drafts.get(bridge.key)?.path === file.path
+          ? `Renamed from ${file.oldPath}`
+          : "Renamed — no content changes";
+      controls.append(renamed);
+    }
     const checkbox = document.createElement("input");
     checkbox.type = "checkbox";
     checkbox.checked = file.viewed;
@@ -537,7 +554,7 @@ export async function mountReview(host: HTMLElement, bridge: Bridge): Promise<()
   const options: CodeViewOptions<CommentAnnotation, undefined> = {
     stickyHeaders: true,
     unsafeCSS:
-      "[data-diffs-header] { cursor: pointer; } [data-metadata] > [data-additions-count] { order: -1; }",
+      "[data-diffs-header] { cursor: pointer; } [data-metadata] > [data-additions-count] { order: -1; } [data-change-type=rename-pure] [data-additions-count], [data-change-type=rename-pure] [data-deletions-count] { display: none; }",
     overflow,
     enableGutterUtility: true,
     enableLineSelection: true,
@@ -626,7 +643,9 @@ export async function mountReview(host: HTMLElement, bridge: Bridge): Promise<()
       (file) =>
         drafts.get(bridge.key)?.path === file.path ||
         ((!unviewed.checked || !file.viewed) &&
-          file.path.toLowerCase().includes(search.value.toLowerCase())),
+          [file.path, file.oldPath ?? ""].some((path) =>
+            path.toLowerCase().includes(search.value.toLowerCase()),
+          )),
     );
     visiblePaths = visible.map((file) => file.path);
     tree.replaceChildren();
@@ -683,21 +702,29 @@ export async function mountReview(host: HTMLElement, bridge: Bridge): Promise<()
       if (!items.has(file.path)) {
         const draft = drafts.get(bridge.key);
         const contents = draft?.path === file.path ? draft.contents : file.newContents;
-        const item: CodeViewItem<CommentAnnotation> = file.fingerprint
-          ? {
-              id: file.path,
-              type: "diff",
-              fileDiff: parseDiffFromFile(
-                file.oldContents === null ? null : { name: file.path, contents: file.oldContents },
-                contents === null ? null : { name: file.path, contents },
-              ),
-              annotations: comments.annotations(file.path),
-            }
-          : {
-              id: file.path,
-              type: "file",
-              file: { name: file.path, contents: file.reason ?? "Unsupported file", lang: "text" },
-            };
+        // A pure rename has no diff body to attach an editor to. Edit its full new file.
+        const pureRenameDraft =
+          draft?.path === file.path && file.oldPath && file.oldContents === file.newContents;
+        const item: CodeViewItem<CommentAnnotation> =
+          file.fingerprint && !pureRenameDraft
+            ? {
+                id: file.path,
+                type: "diff",
+                fileDiff: parseDiffFromFile(
+                  file.oldContents === null
+                    ? null
+                    : { name: file.oldPath ?? file.path, contents: file.oldContents },
+                  contents === null ? null : { name: file.path, contents },
+                ),
+                annotations: comments.annotations(file.path),
+              }
+            : {
+                id: file.path,
+                type: "file",
+                file: file.fingerprint
+                  ? { name: file.path, contents: contents ?? "" }
+                  : { name: file.path, contents: file.reason ?? "Unsupported file", lang: "text" },
+              };
         if (item.type === "diff") {
           // Stable while this displayed content is unchanged, including virtualization.
           // Restored edit text differs from the snapshot and must have a separate key.
@@ -716,7 +743,7 @@ export async function mountReview(host: HTMLElement, bridge: Bridge): Promise<()
         root.focus({ preventScroll: true });
         if (file.reason) message(`${file.path}: ${file.reason}`);
       });
-      jump.title = file.path;
+      jump.title = file.oldPath ? `${file.oldPath} → ${file.path}` : file.path;
       jump.style.cssText +=
         ";display:flex;align-items:center;gap:8px;width:100%;min-width:0;border:0;background:transparent;text-align:left;padding:4px 2px";
       const filename = document.createElement("span");
@@ -724,6 +751,13 @@ export async function mountReview(host: HTMLElement, bridge: Bridge): Promise<()
       filename.style.cssText =
         "flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap";
       jump.append(filename);
+      if (file.oldPath) {
+        const renamed = document.createElement("span");
+        renamed.textContent = "R";
+        renamed.setAttribute("aria-hidden", "true");
+        renamed.style.cssText = `flex-shrink:0;font-size:11px;color:${bridge.colors.statusSuccess}`;
+        jump.append(renamed);
+      }
       const item = items.get(file.path)!;
       if (item.type === "diff") {
         let additions = 0;
@@ -732,7 +766,7 @@ export async function mountReview(host: HTMLElement, bridge: Bridge): Promise<()
           additions += hunk.additionLines;
           deletions += hunk.deletionLines;
         }
-        appendLineCounts(jump, additions, deletions);
+        if (!file.oldPath || additions || deletions) appendLineCounts(jump, additions, deletions);
         for (const path of ancestors) {
           const counts = folderCounts.get(path)!;
           counts.reviewable = true;
@@ -741,7 +775,7 @@ export async function mountReview(host: HTMLElement, bridge: Bridge): Promise<()
         }
         jump.setAttribute(
           "aria-label",
-          `${file.path}${file.viewed ? ", Viewed" : ""}, ${additions} added lines, ${deletions} removed lines`,
+          `${file.path}${file.oldPath ? `, renamed from ${file.oldPath}` : ""}${file.viewed ? ", Viewed" : ""}, ${additions} added lines, ${deletions} removed lines`,
         );
       }
       parent.append(jump);

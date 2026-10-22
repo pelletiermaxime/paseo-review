@@ -10,6 +10,7 @@ type ReviewComment = ReviewAttachment["comments"][number];
 type ContextLine = ReviewComment["context"]["targetLine"];
 export interface CommentDraft {
   id: string;
+  path: string;
   root: string;
   fingerprint: string;
   comment: ReviewComment;
@@ -69,7 +70,7 @@ export function lineComment(
   const oldLines = context.filter((line) => line.oldLineNumber !== null);
   const newLines = context.filter((line) => line.newLineNumber !== null);
   return {
-    filePath,
+    filePath: side === "old" ? (diff.prevName ?? filePath) : filePath,
     side,
     lineNumber,
     body: "",
@@ -85,7 +86,7 @@ export function commentIsCurrent(draft: CommentDraft, snapshot: ReviewSnapshot):
   return (
     draft.root === snapshot.root &&
     snapshot.files.some(
-      (file) => file.path === draft.comment.filePath && file.fingerprint === draft.fingerprint,
+      (file) => file.path === draft.path && file.fingerprint === draft.fingerprint,
     )
   );
 }

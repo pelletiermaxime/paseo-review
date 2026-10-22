@@ -24,7 +24,14 @@ const snapshot = {
 function draft(id = "comment-1"): CommentDraft {
   const comment = lineComment(diff, "example.ts", "new", 3);
   comment.body = "Please explain this change.";
-  return { id, comment, root: "/repo", fingerprint: "version-1", editing: false };
+  return {
+    id,
+    path: "example.ts",
+    comment,
+    root: "/repo",
+    fingerprint: "version-1",
+    editing: false,
+  };
 }
 
 it("anchors removals, additions and unchanged lines to the correct old/new number", () => {
@@ -56,6 +63,47 @@ it("anchors removals, additions and unchanged lines to the correct old/new numbe
     "context",
   ]);
   expect(() => lineComment(diff, "example.ts", "new", 99)).toThrow("displayed diff");
+});
+
+it("retains old/new rename paths while keeping comments attached to one review entry", async () => {
+  const renamed = parseDiffFromFile(
+    { name: "old.ts", contents: "before\nremove\nafter\n" },
+    { name: "folder/new.ts", contents: "before\nadd\nafter\n" },
+  );
+  expect(renamed.type).toBe("rename-changed");
+  const old = lineComment(renamed, "folder/new.ts", "old", 2);
+  const next = lineComment(renamed, "folder/new.ts", "new", 2);
+  expect(old.filePath).toBe("old.ts");
+  expect(next.filePath).toBe("folder/new.ts");
+  expect(old.context.targetLine.content).toBe("remove");
+  expect(next.context.targetLine.content).toBe("add");
+  const state: CommentState = {
+    drafts: [
+      { ...draft(), path: "folder/new.ts", comment: { ...old, body: "Old-side feedback" } },
+      {
+        ...draft("new-side"),
+        path: "folder/new.ts",
+        comment: { ...next, body: "New-side feedback" },
+      },
+    ],
+    sending: false,
+  };
+  const current = {
+    ...snapshot,
+    files: [{ path: "folder/new.ts", oldPath: "old.ts", fingerprint: "version-1" }],
+  } as ReviewSnapshot;
+  expect(state.drafts.every((entry) => commentIsCurrent(entry, current))).toBe(true);
+  const send = vi.fn().mockResolvedValue(undefined);
+  await deliverComments(state, current, send);
+  expect(
+    send.mock.calls[0]![0].comments.map((comment: { filePath: string }) => comment.filePath),
+  ).toEqual(["old.ts", "folder/new.ts"]);
+  const pure = parseDiffFromFile(
+    { name: "old.ts", contents: "same\n" },
+    { name: "folder/new.ts", contents: "same\n" },
+  );
+  expect(pure.type).toBe("rename-pure");
+  expect(pure.hunks).toEqual([]);
 });
 
 it("handles added/deleted files, no final newline, distant hunks and expanded unchanged lines", () => {

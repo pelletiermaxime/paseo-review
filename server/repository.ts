@@ -4,6 +4,7 @@ import path from "node:path";
 import { createHash, randomUUID } from "node:crypto";
 import { execCommand } from "@getpaseo/plugin/server";
 import type { ReviewFile } from "../shared/review";
+import { detectRenames } from "./renames";
 
 export const MAX_FILE_BYTES = 512 * 1024;
 const MAX_TOTAL_BYTES = 8 * 1024 * 1024;
@@ -142,10 +143,13 @@ export async function capture(
     throw new Error("More than 500 changed files. Narrow the worktree before reviewing.");
   let bytes = 0;
   const files: CapturedFile[] = [];
+  const baseModes = new Map<string, string>();
+  const currentModes = new Map<string, string>();
   for (const encoded of paths) {
     const relative = text(Buffer.from(encoded, "latin1"));
     const file: ReviewFile = {
       path: relative,
+      oldPath: null,
       oldContents: null,
       newContents: null,
       fingerprint: null,
@@ -177,6 +181,7 @@ export async function capture(
           if (!match || !["100644", "100755"].includes(match[1]!))
             throw new Error("Git symlinks and submodules are read-only.");
           baseMode = match[1]!;
+          baseModes.set(relative, baseMode);
           if (Number(await git(root, ["cat-file", "-s", match[2]!])) > MAX_FILE_BYTES)
             throw new Error("Original file exceeds the 512 KiB content limit.");
           base = Buffer.from(await git(root, ["cat-file", "blob", match[2]!]), "latin1");
@@ -192,6 +197,7 @@ export async function capture(
       file.newContents = disk ? text(disk.bytes) : null;
       file.kind = base === null ? "added" : disk === null ? "deleted" : "modified";
       const currentMode = disk ? (disk.mode & 0o111 ? "100755" : "100644") : null;
+      if (currentMode) currentModes.set(relative, currentMode);
       file.modeChange =
         baseMode && currentMode && baseMode !== currentMode ? `${baseMode} → ${currentMode}` : null;
       file.fingerprint = hash(
@@ -218,11 +224,30 @@ export async function capture(
     }
     files.push({ file, disk: file.editable ? disk : null });
   }
-  return {
-    files,
-    warning:
-      "HEAD → worktree includes staged, unstaged and untracked files. Renames appear as deletion and addition. Refresh is manual.",
-  };
+  let warning =
+    "HEAD → worktree includes staged, unstaged and untracked files. Renames use Git's 50% similarity threshold. Refresh is manual.";
+  const renamedSources = new Set<string>();
+  try {
+    const matches = await detectRenames(files.map(({ file }) => file));
+    const byPath = new Map(files.map(({ file }) => [file.path, file]));
+    for (const [destination, source] of matches) {
+      const previous = byPath.get(source)!;
+      const current = byPath.get(destination)!;
+      current.oldPath = source;
+      current.oldContents = previous.oldContents;
+      current.kind = "renamed";
+      current.fingerprint = hash(
+        JSON.stringify(["rename", source, previous.fingerprint, current.fingerprint]),
+      );
+      const oldMode = baseModes.get(source);
+      const newMode = currentModes.get(destination);
+      current.modeChange = oldMode !== newMode ? `${oldMode} → ${newMode}` : null;
+      renamedSources.add(source);
+    }
+  } catch {
+    warning += " Rename detection failed; unmatched files are shown separately.";
+  }
+  return { files: files.filter(({ file }) => !renamedSources.has(file.path)), warning };
 }
 export async function saveFile(
   root: string,

@@ -5,7 +5,7 @@ Workspace Review is a standalone Paseo workspace panel for reviewing local chang
 ## Supported scope
 
 - Target Paseo **0.12.0**, with the manifest and SDK pinned to that version. Register a separate panel through the public `addWorkspacePanel`/`openPanel` APIs.
-- Compare **HEAD → worktree**, including staged, unstaged, and untracked files. Load complete original/current contents. Present renames as deletion and addition; support unborn repositories.
+- Compare **HEAD → worktree**, including staged, unstaged, and untracked files. Load complete original/current contents. Pair supported text renames at Git’s 50% similarity threshold without touching the real index or object database. Support staged/unstaged moves and unborn repositories. Display one entry at the new location, both paths in its header, and a useful content diff.
 - Show a searchable changed-file tree with addition/deletion counts on files and cumulative counts on folders beside one scrolling diff surface. Folder totals include visible descendants and follow the active filters. Provide unified/split layouts, sticky file headers, per-file collapse, Collapse all/Expand all, and line wrapping enabled by default.
 - Keep the current scroll position when collapsing a file whose original header is visible. Return to its header when collapsing through a pinned header whose original position is outside the viewport.
 - Persist Viewed markers daemon-side for the exact displayed per-file diff. Marking Viewed collapses that file and returns to its own header. Opening, returning to, or refreshing the panel collapses Viewed files while retaining drafts.
@@ -36,7 +36,7 @@ Collapse, virtualization, teardown, comment creation, and Refresh never save edi
 ## Current limits
 
 - Staged-only and branch-base comparisons are not implemented.
-- Native diff rendering, disk-persisted drafts, and richer rename presentation are not implemented.
+- Native diff rendering and disk-persisted drafts are not implemented. Copy detection and rename pairing for unsupported content are not implemented.
 - Deleted, linked, special-permission, binary, non-UTF-8, oversized, and nonstandard-EOL/BOM files have deliberate read-only restrictions; see the README for exact cases and bounds.
 - SDK 0.12.0 exposes workspace agent membership rather than the built-in view's open-agent-tab list.
 - The upstream editor is beta. Compatibility with later Paseo or Pierre releases requires verification.

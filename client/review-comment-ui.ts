@@ -85,7 +85,7 @@ export function createCommentUI(options: CommentUIOptions) {
       row.style.cssText = "display:flex;align-items:center;gap:8px;padding-top:5px";
       const { filePath, side, lineNumber, body } = draft.comment;
       const stale = !snapshot || !commentIsCurrent(draft, snapshot);
-      const jump = button(`${filePath}:${lineNumber} (${side})`, () => options.jump(filePath));
+      const jump = button(`${filePath}:${lineNumber} (${side})`, () => options.jump(draft.path));
       const text = document.createElement("span");
       text.style.cssText = "flex:1;white-space:pre-wrap;overflow-wrap:anywhere";
       text.textContent = `${stale ? "File changed — review and recreate this comment. " : ""}${draft.editing ? "Unfinished draft: " : ""}${draft.input ?? body}`;
@@ -131,7 +131,7 @@ export function createCommentUI(options: CommentUIOptions) {
     const snapshot = options.snapshot();
     if (!snapshot || !recipient.value || state.sending) return;
     const agentId = recipient.value;
-    const paths = state.drafts.map((draft) => draft.comment.filePath);
+    const paths = state.drafts.map((draft) => draft.path);
     try {
       const pending = deliverComments(state, snapshot, (attachment) =>
         options.send(agentId, attachment),
@@ -156,7 +156,7 @@ export function createCommentUI(options: CommentUIOptions) {
     if (state.sending) return;
     state.drafts = state.drafts.filter((entry) => entry.id !== draft.id);
     refresh();
-    options.update(draft.comment.filePath);
+    options.update(draft.path);
   }
 
   function renderAnnotation(id: string): HTMLElement | undefined {
@@ -187,7 +187,7 @@ export function createCommentUI(options: CommentUIOptions) {
         draft.editing = false;
         delete draft.input;
         refresh();
-        options.update(draft.comment.filePath);
+        options.update(draft.path);
       });
       add.title = "Add comment (Ctrl+Enter / Cmd+Enter)";
       input.setAttribute("aria-keyshortcuts", "Control+Enter Meta+Enter");
@@ -217,7 +217,7 @@ export function createCommentUI(options: CommentUIOptions) {
           draft.editing = false;
           delete draft.input;
           refresh();
-          options.update(draft.comment.filePath);
+          options.update(draft.path);
         }
       });
       cancel.disabled = state.sending;
@@ -240,7 +240,7 @@ export function createCommentUI(options: CommentUIOptions) {
         draft.editing = true;
         focusId = id;
         refresh();
-        options.update(draft.comment.filePath);
+        options.update(draft.path);
       });
       const remove = button("Delete comment", () => removeDraft(draft));
       edit.disabled = remove.disabled = state.sending;
@@ -265,7 +265,7 @@ export function createCommentUI(options: CommentUIOptions) {
         (entry) =>
           entry.fingerprint === draft.fingerprint &&
           entry.root === draft.root &&
-          entry.comment.filePath === draft.comment.filePath &&
+          entry.path === draft.path &&
           entry.comment.side === draft.comment.side &&
           entry.comment.lineNumber === draft.comment.lineNumber,
       );
@@ -273,16 +273,13 @@ export function createCommentUI(options: CommentUIOptions) {
       focusId = (existing ?? draft).id;
       if (existing) existing.editing = true;
       refresh();
-      options.update(draft.comment.filePath);
+      options.update(draft.path);
     },
 
     annotations(path: string): DiffLineAnnotation<CommentAnnotation>[] {
       const snapshot = options.snapshot();
       return state.drafts
-        .filter(
-          (draft) =>
-            snapshot && draft.comment.filePath === path && commentIsCurrent(draft, snapshot),
-        )
+        .filter((draft) => snapshot && draft.path === path && commentIsCurrent(draft, snapshot))
         .map((draft) => ({
           side: draft.comment.side === "old" ? "deletions" : "additions",
           lineNumber: draft.comment.lineNumber,
