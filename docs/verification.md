@@ -1,106 +1,102 @@
-# Verification
+# Verification guide
 
-Evidence collected with Paseo **0.12.0** and **@pierre/diffs 1.5.2** on 2026-10-21 and 2026-10-22. This document separates automated checks, daemon loading, real host interaction, and simulations.
+Choose a feature below, drive the actual Paseo panel, and check the observable result. These pages are procedures, not a record of previous runs. Report results in the change or PR that runs them.
 
-## Automated checks
+## Feature map
 
-`vp check` passed formatting, lint, and TypeScript checks. `vp run test` passed **23 tests across five files**, including the generated-worker consistency check.
+| Feature            | What to test                                                                          | Recipe                                               |
+| ------------------ | ------------------------------------------------------------------------------------- | ---------------------------------------------------- |
+| Navigation         | Both entry points, tree/counts/search, layouts, wrapping, sticky headers and collapse | [Navigation](verification/navigation.md)             |
+| External editor    | Default/configured executable, tree launch, paths, host scope and draft preservation  | [External editor](verification/external-editor.md)   |
+| Renames            | Pure/edited moves, staged/unstaged paths, search and destination-only saves           | [Renames](verification/renames.md)                   |
+| Viewed and refresh | Versioned markers, persistence, filters, opening/returning and draft guards           | [Viewed and refresh](verification/viewed-refresh.md) |
+| Editing            | Save/Cancel, conflicts, draft retention, modes and read-only targets                  | [Editing](verification/editing.md)                   |
+| Comments           | Old/new anchors, local drafts, stale/send failures and readable agent feedback        | [Comments](verification/comments.md)                 |
+| Shortcuts          | Every shortcut, navigation order, focus and typing/composition guards                 | [Shortcuts](verification/shortcuts.md)               |
+| Rendering          | Themes, languages, background highlighting, worker cleanup and native fallback        | [Rendering](verification/rendering.md)               |
 
-Coverage includes:
+## Launch and isolation
 
-- Viewed persistence across service restart, workspace isolation, unrelated file changes, and acknowledging an old displayed version while disk content changes.
-- Successful saves, external-content conflicts, single-use save tokens, wrong workspace/unknown file rejection, concurrent saves, and workspace relocation.
-- Traversal, Git metadata, symlink parent/file, and hard link rejection, including a parent replaced with a symlink after capture.
-- Binary/non-UTF-8/CRLF/BOM/oversized read-only handling, permission-change conflicts, mode-sensitive fingerprints, and Unix permission preservation.
-- Both default highlighter theme variants and TypeScript, PHP, Rust, and Emacs Lisp grammars.
-- Shortcut guards and old/new comment anchors for replacements, added/deleted/empty files, missing final newline, and distant hunks.
-- Exact readable review messages for multiple old/new-side comments, paths with spaces, and multiline bodies; unchanged structured attachments and unavailable-recipient rejection.
-- Real worker-engine integration through Pierre's manager: highlighting, repeated-result reuse, changed-content keys, LRU eviction, and render-option invalidation. A small Node/browser messaging adapter is used for this test.
-
-Service tests use disposable repositories and state stores, including unborn repositories and tree-valued HEAD fixtures for tracked contents, without creating commits. Host rename behavior was also exercised against a real commit-backed HEAD as described below.
-
-A clean copy installed successfully from the frozen lockfile and passed the same checks. The generated asset is also parsed to reject executable imports and the unused alternate engine.
-
-## Daemon loading and host environment
-
-Directory-source installation and scoped plugin reloads reported `workspace-review` **running** on the real Paseo 0.12.0 daemon. The install/reload commands are:
+Use Paseo **0.12.0** and the pinned dependencies. From this checkout:
 
 ```sh
-paseo plugin install /absolute/path/to/paseo-review --json
-paseo plugin reload workspace-review
+vp install --frozen-lockfile
+vp check
+vp run test
+paseo plugin ls --json
+paseo plugin reload workspace-review --json
 ```
 
-UI verification used the official [Paseo web client](https://app.paseo.sh) connected to that daemon. It exercised the actual workspace panel, rather than an isolated mock. Browser tools did not expose the main desktop window, so this does not prove direct interaction with the main Electron window or a physical mobile device.
+For a first installation, run `paseo plugin install "$(pwd)" --json` before reload. Require the registration to point to this checkout.
 
-A temporary localhost copy of the web app was rejected by the daemon's origin checks. Allowed origins and daemon security settings were left unchanged, and the temporary server was stopped.
+Use the existing host; do not start a second daemon on its port. Run file mutations in a disposable clone. These commands share one shell; carry the resulting paths into subsequent command-runner calls:
 
-## Host UI coverage
+```sh
+REVIEW_SOURCE=$(git rev-parse --show-toplevel)
+REVIEW_RUN=$(mktemp -d)
+REVIEW_REPO="$REVIEW_RUN/repository"
+mkdir "$REVIEW_RUN/artifacts"
+git clone --local --no-hardlinks "$REVIEW_SOURCE" "$REVIEW_REPO"
+paseo workspace create --isolation local --path "$REVIEW_REPO" --title "Workspace Review verification" --json
+```
 
-The following behaviors were exercised in the real workspace panel:
+Record the returned workspace ID as `REVIEW_WORKSPACE_ID`. This copies existing history without creating a commit. The plugin comes from `REVIEW_SOURCE`; the reviewed files come from `REVIEW_REPO`.
 
-- New tab → Workspace Review, nested searchable file tree, full-content diffs, Shadow DOM styles, syntax tokens, unified/split layouts, and addition/deletion counts.
-- Sticky headers aligned with the diff viewport, handing off to the next file while scrolling, with Viewed/Edit/collapse controls still usable.
-- File-tree navigation, individual header/arrow/button collapse, Collapse all/Expand all, filters, and wrapped/unwrapped long lines.
-- Viewed persistence after Refresh and reload; marking Viewed collapses and returns to that same file header. Returning to a retained inactive tab and opening a fresh tab both collapse Viewed files while preserving in-memory drafts.
-- Explicit editing, Save with disk readback, refreshed diff, and reset Viewed marker. Drafts survived collapse, actual CodeView virtualization, layout changes, and panel remounts during the plugin lifetime.
-- An external edit between display and Save caused a conflict. External disk contents remained intact and the typed draft stayed available. Cancel discarded the draft and Refresh loaded the external version.
-- Inline comment creation, editing/deletion, filtering/collapse/layout retention, old/new anchors, and explicit feedback controls.
-- File navigation, Viewed, collapse, line navigation, comment focus, filter focus, and shortcut help. Active editors, typing fields, composition, modifier chords, and hidden retained panels were guarded.
+Create the common fixture in that clone:
 
-Save verification used a disposable fixture, removed afterward. Other edit checks ended with Cancel and disk readback. Verification comments were removed and original Viewed states restored. No test feedback was sent to a live agent.
+```sh
+python - "$REVIEW_REPO" <<'PYFIXTURE'
+from pathlib import Path
+import sys
+repo = Path(sys.argv[1])
+scratch = repo / "scratch"
+(scratch / "nested").mkdir(parents=True)
+(scratch / "a.ts").write_text("export const a = 1;\nexport const b = 2;\n")
+(scratch / "nested/b.ts").write_text("export const c = 3;\n")
+(scratch / "long.txt").write_text("long " * 100 + "\n")
+(scratch / "many.ts").write_text("".join(f"export const line{i} = {i};\n" for i in range(400)))
+(scratch / "binary.bin").write_bytes(b"\0binary")
+(scratch / "crlf.txt").write_bytes(b"keep\r\nthis\r\n")
+overview = repo / "OVERVIEW.md"
+overview.write_text(overview.read_text().replace("# Workspace Review", "# Review fixture", 1))
+tracked = repo / "server/repository.ts"
+lines = tracked.read_text().splitlines(keepends=True)
+lines.insert(len(lines) // 2, "// verification context fixture\n")
+tracked.write_text("".join(lines))
+PYFIXTURE
+```
 
-The plain `j` key was delivered through browser keypress automation. The broader shortcut matrix, Escape, and Ctrl/Cmd+Enter used constructed KeyboardEvents in the live host DOM because the automation chord tool did not reliably populate modifier fields. This is handler evidence, not physical-keyboard or macOS verification. The host reserves `?` for its own dialog; the plugin uses `h` for help.
+## Doctor
 
-## Collapse and highlighting measurements
+Before driving, or whenever the UI looks wrong:
 
-Before background highlighting, four local collapse samples took **345, 269, 206, and 206 ms** from button activation through two animation frames. The click handler itself took about 0–1 ms; synchronous highlighting of a newly exposed file accounted for the delay.
+1. Run `paseo daemon status --json`: require a reachable 0.12.0 daemon. Match its server ID to the selected client host.
+2. Run `paseo plugin ls --json`: require `workspace-review` enabled/running from this checkout. This proves daemon loading only.
+3. Select the disposable workspace. Open **New tab → Workspace Review**. Require the **Workspace review** region, **Refresh** button and **Changed files** navigation.
+4. Require `scratch/a.ts` and the modified `OVERVIEW.md` in the tree. If the panel is unavailable, stop UI verification and report the prerequisite; do not change global security settings to make it pass.
 
-With one background worker and a bounded shared token cache, five corresponding samples took **25, 31, 30, 18, and 27 ms**. Later checks ranged from 21–46 ms. The actual host reported an initialized worker, populated caches, no worker failures, and syntax-colored spans after the response.
+## Driving conventions
 
-These are local UI samples rather than a controlled benchmark or a guarantee for every file/device. Browser scheduling, cache state, and instrumentation affect the numbers. Closing the review tab unmounted the panel and left its former pool with zero workers, tasks, subscribers, and cached results; reopening created a fresh worker.
+Use Paseo browser tools against the real host. Open `https://app.paseo.sh` with `browser_new_tab` when that client can load the plugin, then select the matching host and disposable workspace.
 
-Collapsing a header already in the viewport preserved both scrollTop and its screen position through header, arrow, button, and `z` actions in unified/split layouts. Collapsing a pinned header after scrolling into its file still returned to that file's original header. Viewed retained its explicit return-to-header behavior.
+Take `browser_snapshot` and use its current refs with `browser_click`, `browser_fill` and `browser_type`. Take a fresh snapshot after state changes. Prefer visible names and these stable handles:
 
-## Bundle and native boundary
+| Surface        | Handle                                                                 |
+| -------------- | ---------------------------------------------------------------------- |
+| Panel          | region `Workspace review`; `[data-diff-review="ready"]`                |
+| File tree      | navigation `Changed files`                                             |
+| Search         | searchbox `Filter changed files`                                       |
+| Viewed         | checkbox `Viewed <current path>`                                       |
+| Feedback       | region `Review feedback`; combobox `Send feedback to agent`            |
+| Comment editor | textarea `Comment on <side-specific path> <old/new> line <number>`     |
+| File editor    | `[contenteditable="true"][role="textbox"]` inside Pierre's shadow root |
 
-The installed daemon compiler produced these uncompressed neutral client bundles at the recorded checkpoints:
+Read shadow roots when inspecting diff lines or editor contents. Use real clicks/typing for user journeys. Constructed KeyboardEvents check handlers; report them separately from physical key delivery. Run shell commands through the command runner, not by typing into a Paseo terminal tab.
 
-| Checkpoint                       |      Bytes | Decimal MB |
-| -------------------------------- | ---------: | ---------: |
-| Before default-theme/engine trim | 12,329,232 |      12.33 |
-| After default-theme/engine trim  | 10,029,359 |      10.03 |
-| With background highlighting     | 10,533,533 |      10.53 |
+## Evidence and cleanup
 
-The trim removed 2,299,873 bytes (18.65%). Compiler metadata showed the language-grammar contribution unchanged at 8,118,056 emitted bytes. Only default Pierre dark/light theme modules remained, with no Shiki alternate theme modules or Oniguruma WASM engine inputs. These are emitted code sizes, not RAM, startup timings, or compressed transfer sizes.
+For every executed feature ID, keep action/result snapshots, screenshots where useful, commands and exit codes under `$REVIEW_RUN/artifacts`. Save needs disk readback; delivery needs the received message and attachment result. A success label alone is insufficient. Separate automated tests, daemon loading, real host interaction, simulations and unexecuted checks.
 
-The renderer probe made no separate Pierre/Shiki/WASM resource requests. The worker asset is local, has no executable imports or language/theme catalogues, and receives required grammars and the default theme through Pierre's protocol. A fully disconnected client/daemon session was not tested.
+Cancel edits and remove verification comments. Close only browser tabs created by the run. Archive only `REVIEW_WORKSPACE_ID` with `paseo workspace archive "$REVIEW_WORKSPACE_ID" --json`. Confirm the path is this run's clone before removing `REVIEW_REPO`; retain `$REVIEW_RUN/artifacts`. Do not stop the shared daemon or clear the user's Viewed store.
 
-The daemon-produced bundle was evaluated without DOM/Worker globals and rendered with an iOS platform in React's test renderer. The native fallback appeared without initializing CodeView or issuing snapshot RPCs. This is a simulation, not Hermes or physical-device evidence.
-
-## Remaining limits
-
-- Direct main Electron-window, physical mobile, and physical macOS keyboard interaction have not been exercised by this verification.
-- No newly delivered chat bubble was tested against a live agent. Readable feedback text and the structured attachment are covered at the SDK boundary; loading and feedback controls were checked in the actual host.
-- Host UI checks primarily used untracked additions. Old-side replacements are covered by real-parser/comment-anchor tests, rather than the full host UI matrix.
-- Save conflict detection is optimistic; arbitrary external writers do not share a lock.
-- Newer Paseo/Pierre versions and completely disconnected operation require separate verification.
-
-## Folder line counts — 2026-10-22
-
-Folder rows now sum addition/deletion counts from their visible descendant files, including nested folders. They reuse file-row colors, number formatting, and zero-side omission. Search and Unviewed only use the same filtered file set; unsupported files do not contribute counts. Folder names retain ellipsis and a native disclosure marker, and accessible labels include the full folder path and totals.
-
-`vp check` passed and the plugin reload reported running. In the real Paseo panel through the official web client, a disposable nested fixture with two- and three-line files produced +5 on its parent and +3 on its nested folder. A binary-only child folder displayed no invented count. Collapsing/reopening retained the parent total, and filtering to the three-line file changed all three ancestor totals to +3. Existing tracked changes displayed matching positive/negative totals on their parent folders. A screenshot confirmed row alignment and visible disclosure markers. The fixture was removed and the filter cleared; no Viewed markers, comments, or source files were changed through the UI.
-
-## Header count order — 2026-10-22
-
-The panel's renderer CSS places the existing additions counter before deletions in file headers, matching the file tree. This overrides Pierre's default visual order without replacing its counters or modifying the dependency. `vp check` passed, the scoped plugin reload reported running, and rendered counter positions were checked in the actual Paseo web panel for unified, split, and collapsed headers. Layout was restored to unified with files expanded; no edits, comments, or Viewed markers were saved through the UI.
-
-## Rename detection — 2026-10-22
-
-Supported added/deleted text captures are matched with Git's no-index rename detector at 50% similarity, including empty files. Matching uses private temporary copies with synthetic names, a 500-candidate bound, and a ten-second subprocess timeout; copies are removed afterward. It never stages or writes repository objects. Unsupported content remains separate, copies are not inferred, and a failed comparison falls back to separate entries with a warning.
-
-A rename has one destination-keyed review entry with its original path/content, a rename-sensitive fingerprint, and destination save token. Pierre renders old → new paths and only changed lines. The tree shows R at the new location; search matches either path, and folder totals count the entry once there. Pure moves show no content changes. Their Edit action uses Pierre's full-file editor because a zero-hunk diff has no body to attach the diff editor to.
-
-Automated tests cover staged pure/empty renames, an unstaged move with edits and special characters in the source path, unchanged real index/object counts, destination-only saves, external-edit conflicts, mode preservation, Viewed persistence/invalidation, and separate unrelated/copy/unsupported entries. Comment tests assert original/current paths on old/new sides while both use the destination review identity. All 23 tests and static checks pass.
-
-In the actual Paseo web panel on the 0.12.0 daemon, temporarily moved a tracked documentation file and verified one R entry and a pure-rename header. Edit opened the complete destination file; typing and explicit Save wrote only the destination. Disk readback matched, the original path stayed absent, and Refresh showed a rename with just +1 rather than a full addition/deletion. Searching the original name found the entry. Viewed saved and collapsed it; Unviewed only hid it. The marker was unchecked again. A new-side local comment used the destination path and was deleted without sending. The original documentation file was then restored byte-for-byte and the temporary directory removed. Old-side feedback paths and staged renames were verified by automated tests rather than live agent delivery or a staged host fixture.
+Keep these recipes current when behavior changes. Do not append dated results; use [plan.md](plan.md) for outstanding work.

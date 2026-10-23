@@ -2,7 +2,7 @@ import type { PluginWorkspacePanelProps } from "@getpaseo/plugin/client";
 import { usePaseo, useRpc } from "@getpaseo/plugin/client";
 import { useEffect, useRef, useState } from "react";
 import { Platform, Text, View } from "react-native";
-import { saveRpc, snapshotRpc, viewedRpc } from "../shared/review";
+import { openEditorRpc, saveRpc, snapshotRpc, viewedRpc } from "../shared/review";
 import { listFeedbackAgents, sendFeedback } from "./review-comments";
 
 export function ReviewPanel({ theme, layout, workspaceId, host }: PluginWorkspacePanelProps) {
@@ -11,9 +11,10 @@ export function ReviewPanel({ theme, layout, workspaceId, host }: PluginWorkspac
   const snapshot = useRpc(snapshotRpc);
   const viewed = useRpc(viewedRpc);
   const save = useRpc(saveRpc);
+  const openEditor = useRpc(openEditorRpc);
   const paseo = usePaseo();
-  const callbacks = useRef({ snapshot, viewed, save, theme, paseo });
-  callbacks.current = { snapshot, viewed, save, theme, paseo };
+  const callbacks = useRef({ snapshot, viewed, save, openEditor, theme, paseo });
+  callbacks.current = { snapshot, viewed, save, openEditor, theme, paseo };
   const web = layout.platform === "web" && Platform.OS === "web";
   useEffect(() => {
     if (!web) return;
@@ -33,6 +34,8 @@ export function ReviewPanel({ theme, layout, workspaceId, host }: PluginWorkspac
             callbacks.current.viewed({ workspaceId, snapshotId, path, viewed: value }),
           save: (snapshotId, path, contents) =>
             callbacks.current.save({ workspaceId, snapshotId, path, contents }),
+          openEditor: (snapshotId, path) =>
+            callbacks.current.openEditor({ workspaceId, snapshotId, path }),
           agents: () => listFeedbackAgents(callbacks.current.paseo, workspaceId),
           send: (agentId, attachment) =>
             sendFeedback(callbacks.current.paseo, workspaceId, agentId, attachment),

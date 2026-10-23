@@ -26,6 +26,11 @@ export const snapshotRpc = defineRpc({
   }),
 });
 const displayed = workspace.extend({ snapshotId: z.string(), path: z.string() });
+export const openEditorRpc = defineRpc({
+  name: "review.open-editor",
+  input: displayed,
+  output: z.object({ launched: z.boolean() }),
+});
 export const viewedRpc = defineRpc({
   name: "review.viewed",
   input: displayed.extend({ viewed: z.boolean() }),

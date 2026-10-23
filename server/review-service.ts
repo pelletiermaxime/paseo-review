@@ -1,9 +1,9 @@
-import { mkdir, readFile, rename, writeFile } from "node:fs/promises";
+import { lstat, mkdir, readFile, rename, writeFile } from "node:fs/promises";
 import { randomUUID } from "node:crypto";
 import path from "node:path";
 import { z } from "zod";
 import type { ReviewSnapshot } from "../shared/review";
-import { capture, hash, repositoryRoot, saveFile } from "./repository";
+import { capture, hash, repositoryRoot, saveFile, validatePath } from "./repository";
 import type { CapturedFile } from "./repository";
 
 const stateSchema = z.record(z.string(), z.string());
@@ -104,6 +104,22 @@ export class ReviewService {
     this.saves = operation;
     return operation;
   }
+
+  async editorTarget(workspaceId: string, snapshotId: string, relative: string, directory: string) {
+    const { session, file } = this.displayed(workspaceId, snapshotId, relative);
+    if ((await repositoryRoot(directory)) !== session.root)
+      throw new Error("Workspace repository changed. Refresh before opening the editor.");
+    if (file.file.kind === "deleted") throw new Error("Deleted files cannot be opened.");
+    const target = await validatePath(session.root, relative);
+    const stat = await lstat(target).catch((error: NodeJS.ErrnoException) => {
+      if (error.code === "ENOENT") throw new Error("File no longer exists. Refresh the review.");
+      throw error;
+    });
+    if (!stat.isFile() || stat.isSymbolicLink() || stat.nlink !== 1)
+      throw new Error("Only regular files with no symlinks or hard links can be opened.");
+    return { root: session.root, file: target };
+  }
+
   private async saveCaptured(
     workspaceId: string,
     snapshotId: string,

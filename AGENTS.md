@@ -9,4 +9,4 @@
 - Tie Viewed markers to the exact per-file diff displayed.
 - Verify UI changes in the actual Paseo host and distinguish runtime evidence from static checks.
 
-See docs/plan.md for the agreed scope and current evidence.
+Use docs/plan.md only for unfinished work. Use docs/verification.md and its feature recipes for repeatable checks; report run results in the change or PR, not as a diary in those files.

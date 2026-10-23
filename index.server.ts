@@ -1,10 +1,13 @@
 import type { PluginHandlerContext, PluginServerContext } from "@getpaseo/plugin/server";
 import { homedir } from "node:os";
 import path from "node:path";
-import { saveRpc, snapshotRpc, viewedRpc } from "./shared/review";
+import { openEditorRpc, saveRpc, snapshotRpc, viewedRpc } from "./shared/review";
+import { reviewSettings } from "./shared/settings";
+import { launchEditor } from "./server/editor";
 import { ReviewService } from "./server/review-service";
 
 export default function contribute(server: PluginServerContext) {
+  const settings = server.registerSettings(reviewSettings);
   const service = new ReviewService(
     path.join(
       process.env.PASEO_HOME ?? path.join(homedir(), ".paseo"),
@@ -33,6 +36,18 @@ export default function contribute(server: PluginServerContext) {
       input.contents,
       currentDirectory,
     );
+  });
+  server.handle(openEditorRpc, async (input, context) => {
+    const target = await service.editorTarget(
+      input.workspaceId,
+      input.snapshotId,
+      input.path,
+      await directory(context, input.workspaceId),
+    );
+    const current = await settings.read();
+    if (current.status !== "ready") throw new Error(current.error);
+    await launchEditor(current.values.editorExecutable, target.root, target.file);
+    return { launched: true };
   });
   return () => {};
 }

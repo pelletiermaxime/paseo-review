@@ -44,6 +44,66 @@ async function baseline(root: string) {
   await execute("git", ["-C", root, "symbolic-ref", "HEAD", "refs/review-test/base"]);
 }
 
+it("resolves external editor targets only from the matching workspace snapshot", async () => {
+  const { root, service } = await fixture();
+  const relative = 'space and "quote".ts';
+  await writeFile(path.join(root, relative), "const changed = true;\n");
+  const snapshot = await service.snapshot("workspace", root);
+  const before = await readFile(path.join(root, relative));
+  expect(await service.editorTarget("workspace", snapshot.id, relative, root)).toEqual({
+    root,
+    file: path.join(root, relative),
+  });
+  expect(await readFile(path.join(root, relative))).toEqual(before);
+  await expect(
+    service.editorTarget("other-workspace", snapshot.id, relative, root),
+  ).rejects.toThrow("snapshot expired");
+  await expect(
+    service.editorTarget("workspace", snapshot.id, "../outside.ts", root),
+  ).rejects.toThrow("displayed snapshot");
+  const other = await fixture();
+  await expect(
+    service.editorTarget("workspace", snapshot.id, relative, other.root),
+  ).rejects.toThrow("repository changed");
+  await rm(path.join(root, relative));
+  await expect(service.editorTarget("workspace", snapshot.id, relative, root)).rejects.toThrow(
+    "no longer exists",
+  );
+  await symlink(path.join(other.root, "outside.ts"), path.join(root, relative));
+  await expect(service.editorTarget("workspace", snapshot.id, relative, root)).rejects.toThrow(
+    "Only regular files",
+  );
+});
+
+it("opens renamed destinations and oversized files but rejects deleted files and symlink parents", async () => {
+  const { root, service } = await fixture();
+  await writeFile(path.join(root, "before.ts"), "export const value = 1;\n");
+  await writeFile(path.join(root, "deleted.ts"), "export const removed = true;\n");
+  await baseline(root);
+  await rename(path.join(root, "before.ts"), path.join(root, "after.ts"));
+  await rm(path.join(root, "deleted.ts"));
+  await writeFile(path.join(root, "large.txt"), "x".repeat(MAX_FILE_BYTES + 1));
+  await mkdir(path.join(root, "folder"));
+  await writeFile(path.join(root, "folder/file.ts"), "changed\n");
+  const snapshot = await service.snapshot("workspace", root);
+  expect(await service.editorTarget("workspace", snapshot.id, "after.ts", root)).toEqual({
+    root,
+    file: path.join(root, "after.ts"),
+  });
+  expect(await service.editorTarget("workspace", snapshot.id, "large.txt", root)).toEqual({
+    root,
+    file: path.join(root, "large.txt"),
+  });
+  await expect(service.editorTarget("workspace", snapshot.id, "deleted.ts", root)).rejects.toThrow(
+    "Deleted files",
+  );
+  await rename(path.join(root, "folder"), path.join(root, "moved-folder"));
+  await symlink(path.join(root, "moved-folder"), path.join(root, "folder"));
+  await expect(
+    service.editorTarget("workspace", snapshot.id, "folder/file.ts", root),
+  ).rejects.toThrow("parent directories");
+});
+
 it("pairs unstaged renames with edits without changing the index or object database", async () => {
   const { root, service } = await fixture();
   const source = 'old folder/é-[literal]\t".ts';

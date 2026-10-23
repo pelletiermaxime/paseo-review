@@ -225,7 +225,7 @@ export async function capture(
     files.push({ file, disk: file.editable ? disk : null });
   }
   let warning =
-    "HEAD → worktree includes staged, unstaged and untracked files. Renames use Git's 50% similarity threshold. Refresh is manual.";
+    "HEAD → worktree includes staged, unstaged and untracked files. Renames use Git's 50% similarity threshold. Refreshes when you return to this tab; paused while editing.";
   const renamedSources = new Set<string>();
   try {
     const matches = await detectRenames(files.map(({ file }) => file));

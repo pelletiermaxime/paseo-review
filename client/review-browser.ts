@@ -15,6 +15,7 @@ interface Bridge {
   snapshot(): Promise<ReviewSnapshot>;
   viewed(snapshotId: string, path: string, value: boolean): Promise<{ viewed: boolean }>;
   save(snapshotId: string, path: string, contents: string): Promise<{ changed: boolean }>;
+  openEditor(snapshotId: string, path: string): Promise<{ launched: boolean }>;
   agents(): Promise<FeedbackAgent[]>;
   send(agentId: string, attachment: ReviewAttachment): Promise<void>;
 }
@@ -44,6 +45,7 @@ export async function mountReview(host: HTMLElement, bridge: Bridge): Promise<()
   let overflow: "wrap" | "scroll" = "wrap";
   let version = 0;
   const collapsed = new Set<string>();
+  const opening = new Set<string>();
   const items = new Map<string, CodeViewItem<CommentAnnotation>>();
   let visiblePaths: string[] = [];
   let activePath: string | undefined;
@@ -546,6 +548,14 @@ export async function mountReview(host: HTMLElement, bridge: Bridge): Promise<()
       reason.title = file.reason ?? "Read-only file";
       controls.append(reason);
     }
+    if (file.kind !== "deleted") {
+      const open = button("↗", () => void openEditor(file, open));
+      open.dataset.openEditor = file.path;
+      open.setAttribute("aria-label", `Open ${file.path} in external editor`);
+      open.title = "Open in external editor";
+      open.disabled = opening.has(file.path);
+      controls.append(open);
+    }
     controls.append(
       button(collapsed.has(file.path) ? "Expand" : "Collapse", () => toggleFile(file.path)),
     );
@@ -605,13 +615,16 @@ export async function mountReview(host: HTMLElement, bridge: Bridge): Promise<()
   const highlighter = createReviewHighlighter();
   const viewer = new CodeView({ ...options, diffStyle }, highlighter.pool);
   viewer.setup(viewport);
-  // Paseo retains inactive tabs in the DOM. Reapply the default on return as well as mount.
-  let wasVisible = false;
+  // Paseo retains inactive tabs in the DOM. Refresh only on hidden → visible transitions.
+  // The initial mount already loads a snapshot; resizing a visible panel is not activation.
+  let wasVisible: boolean | undefined;
   const visibility = new ResizeObserver(([entry]) => {
     const visible =
       entry !== undefined && entry.contentRect.width > 0 && entry.contentRect.height > 0;
+    const returning = visible && wasVisible === false;
     if (visible && !wasVisible && collapseViewedFiles()) render();
     wasVisible = visible;
+    if (returning) void load(true);
   });
   visibility.observe(root);
 
@@ -631,6 +644,25 @@ export async function mountReview(host: HTMLElement, bridge: Bridge): Promise<()
     if (deletions > 0 || additions === 0) counts.append(removed);
     counts.setAttribute("aria-hidden", "true");
     row.append(counts);
+  }
+
+  async function openEditor(file: ReviewFile, control: HTMLButtonElement) {
+    if (!snapshot || opening.has(file.path)) return;
+    opening.add(file.path);
+    control.disabled = true;
+    try {
+      await bridge.openEditor(snapshot.id, file.path);
+      message(`Editor launched for ${file.path}.`);
+    } catch (error) {
+      message(errorMessage(error));
+    } finally {
+      opening.delete(file.path);
+      if (!disposed) {
+        // Virtualization or a Viewed change may have replaced the header while launching.
+        for (const button of root.querySelectorAll<HTMLButtonElement>("[data-open-editor]"))
+          if (button.dataset.openEditor === file.path) button.disabled = false;
+      }
+    }
   }
 
   function render() {
@@ -798,9 +830,10 @@ export async function mountReview(host: HTMLElement, bridge: Bridge): Promise<()
     );
   }
 
-  async function load() {
+  async function load(automatic = false) {
+    if (disposed) return;
     if (busy || drafts.has(bridge.key)) {
-      message("Save or Cancel the active draft before refreshing.");
+      if (!automatic) message("Save or Cancel the active draft before refreshing.");
       return;
     }
     busy = true;
