@@ -22,14 +22,6 @@ export interface CommentState {
   sending: boolean;
   changed?: () => void;
 }
-// Like edit drafts, these survive panel remounts in this client plugin lifetime.
-const states = new Map<string, CommentState>();
-export function commentState(key: string): CommentState {
-  let state = states.get(key);
-  if (!state) states.set(key, (state = { drafts: [], sending: false }));
-  return state;
-}
-
 /** Build context from the displayed full diff, including expanded unchanged lines. */
 export function lineComment(
   diff: FileDiffMetadata,

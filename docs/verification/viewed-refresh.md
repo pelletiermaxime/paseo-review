@@ -31,5 +31,5 @@ Preconditions: [common fixture](../verification.md), no active edits or test com
 ## Gotchas
 
 - An edit or in-flight operation can skip auto-refresh. Save/Cancel, then Refresh or return again.
-- Full client/plugin reload loses in-memory drafts; panel remount is different.
+- App reload restores each tab’s drafts and view state. Closing a modified tab requires confirmation and discards only that tab’s state.
 - Restore fixture markers; never clear the user's entire Viewed store.

@@ -3,6 +3,6 @@
   "name": "Workspace Review",
   "description": "Workspace diff review with file navigation, Viewed tracking, inline editing and agent feedback.",
   "requirements": {
-    "paseo": "0.12.0"
+    "paseo": ">=0.13.0"
   }
 }

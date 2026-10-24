@@ -2,6 +2,8 @@ import { CodeView, parseDiffFromFile, preloadHighlighter } from "@pierre/diffs";
 import type { CodeViewItem, CodeViewOptions } from "@pierre/diffs";
 import { Editor } from "@pierre/diffs/edit";
 import type { PluginWorkspacePanelProps } from "@getpaseo/plugin/client";
+import { currentDraftSnapshot, persistedReviewState, type ReviewTabState } from "./review-state";
+import type { CommentState } from "./review-comments";
 import type { ReviewFile, ReviewSnapshot } from "../shared/review";
 import { lineComment, type FeedbackAgent, type ReviewAttachment } from "./review-comments";
 import { createCommentUI, type CommentAnnotation } from "./review-comment-ui";
@@ -10,7 +12,8 @@ import { createReviewHighlighter } from "./review-highlighter";
 
 type Colors = PluginWorkspacePanelProps["theme"]["colors"];
 interface Bridge {
-  key: string;
+  state: ReviewTabState;
+  onStateChange(state: ReviewTabState): void;
   colors: Colors;
   snapshot(): Promise<ReviewSnapshot>;
   viewed(snapshotId: string, path: string, value: boolean): Promise<{ viewed: boolean }>;
@@ -19,13 +22,6 @@ interface Bridge {
   agents(): Promise<FeedbackAgent[]>;
   send(agentId: string, attachment: ReviewAttachment): Promise<void>;
 }
-interface Draft {
-  snapshot: ReviewSnapshot;
-  path: string;
-  contents: string;
-}
-// Keep a draft across panel unmount/remount. Completion callbacks never write.
-const drafts = new Map<string, Draft>();
 function errorMessage(error: unknown) {
   return (error instanceof Error ? error.message : String(error))
     .replace(/^Request failed: /, "")
@@ -40,15 +36,19 @@ export async function mountReview(host: HTMLElement, bridge: Bridge): Promise<()
   });
   let disposed = false;
   let busy = false;
-  let snapshot: ReviewSnapshot | undefined = drafts.get(bridge.key)?.snapshot;
-  let diffStyle: "unified" | "split" = "unified";
-  let overflow: "wrap" | "scroll" = "wrap";
+  const restored = structuredClone(bridge.state);
+  let draft = restored.draft ?? undefined;
+  const commentState: CommentState = { drafts: restored.comments, sending: false };
+  let snapshot: ReviewSnapshot | undefined = draft?.snapshot;
+  let diffStyle = restored.diffStyle;
+  let overflow = restored.overflow;
+  let initialLoad = true;
   let version = 0;
-  const collapsed = new Set<string>();
+  const collapsed = new Set(restored.collapsed);
   const opening = new Set<string>();
   const items = new Map<string, CodeViewItem<CommentAnnotation>>();
   let visiblePaths: string[] = [];
-  let activePath: string | undefined;
+  let activePath = restored.activePath ?? undefined;
   const root = document.createElement("section");
   root.dataset.diffReview = "ready";
   root.tabIndex = 0;
@@ -90,31 +90,35 @@ export async function mountReview(host: HTMLElement, bridge: Bridge): Promise<()
   const refresh = button("Refresh", () => {
     void load();
   });
-  const layout = button("Split", () => {
+  const layout = button(diffStyle === "unified" ? "Split" : "Unified", () => {
     diffStyle = diffStyle === "unified" ? "split" : "unified";
     layout.textContent = diffStyle === "unified" ? "Split" : "Unified";
     viewer.setOptions({ ...options, diffStyle, overflow });
+    persist();
   });
   const collapseAll = button("Collapse all", () => setAllCollapsed(true));
   const expandAll = button("Expand all", () => setAllCollapsed(false));
   const wrap = document.createElement("input");
   wrap.type = "checkbox";
-  wrap.checked = true;
+  wrap.checked = overflow === "wrap";
   const wrapLabel = document.createElement("label");
   wrapLabel.style.cssText = "display:flex;align-items:center;gap:5px";
   wrapLabel.append(wrap, "Wrap lines");
   wrap.addEventListener("change", () => {
     overflow = wrap.checked ? "wrap" : "scroll";
     viewer.setOptions({ ...options, diffStyle, overflow });
+    persist();
   });
   const search = document.createElement("input");
   search.type = "search";
+  search.value = restored.filter;
   search.placeholder = "Filter files…";
   search.setAttribute("aria-label", "Filter changed files");
   search.style.cssText = `font:inherit;color:${bridge.colors.foreground};background:${bridge.colors.surface1};border:1px solid ${bridge.colors.border};border-radius:5px;padding:5px 8px;min-width:120px`;
   search.addEventListener("input", () => render());
   const unviewed = document.createElement("input");
   unviewed.type = "checkbox";
+  unviewed.checked = restored.unviewedOnly;
   const unviewedLabel = document.createElement("label");
   unviewedLabel.style.cssText = "display:flex;align-items:center;gap:5px";
   unviewedLabel.append(unviewed, "Unviewed only");
@@ -159,10 +163,12 @@ export async function mountReview(host: HTMLElement, bridge: Bridge): Promise<()
   );
   const comments = createCommentUI({
     ...bridge,
+    state: commentState,
+    onChange: persist,
     container: root,
     button,
     snapshot: () => snapshot,
-    editing: () => drafts.has(bridge.key),
+    editing: () => draft !== undefined,
     update: (path) => {
       if (!disposed) updateFile(path);
     },
@@ -299,7 +305,7 @@ export async function mountReview(host: HTMLElement, bridge: Bridge): Promise<()
     const file = snapshot?.files.find((file) => file.path === path);
     const item = items.get(path);
     if (!snapshot || !file?.fingerprint || item?.type !== "diff") return;
-    if (drafts.get(bridge.key)?.path === path) {
+    if (draft?.path === path) {
       message("Save or Cancel this file's edits before adding a line comment.");
       return;
     }
@@ -329,7 +335,7 @@ export async function mountReview(host: HTMLElement, bridge: Bridge): Promise<()
       return;
     }
     const key = reviewShortcut(event, typingTarget(event));
-    if (!key || drafts.has(bridge.key)) return;
+    if (!key || draft !== undefined) return;
     event.preventDefault();
     event.stopPropagation();
     if (key === "h") {
@@ -354,6 +360,7 @@ export async function mountReview(host: HTMLElement, bridge: Bridge): Promise<()
       viewer.clearSelectedLines();
       viewer.scrollTo({ type: "item", id: activePath!, align: "start", behavior: "instant" });
       root.focus({ preventScroll: true });
+      persist();
     } else if (key === "z") toggleFile(path);
     else if (key === "r") {
       const file = snapshot?.files.find((file) => file.path === path);
@@ -413,12 +420,13 @@ export async function mountReview(host: HTMLElement, bridge: Bridge): Promise<()
     if (item) {
       item.version = ++version;
       item.collapsed = collapsed.has(relative);
-      item.edit = drafts.get(bridge.key)?.path === relative;
+      item.edit = draft?.path === relative;
       if (item.type === "diff") item.annotations = item.edit ? [] : comments.annotations(relative);
       viewer.updateItem({ ...item });
     }
-    refresh.disabled = busy || drafts.has(bridge.key);
+    refresh.disabled = busy || draft !== undefined;
     comments.refresh();
+    persist();
   }
 
   async function mark(file: ReviewFile, value: boolean) {
@@ -447,9 +455,9 @@ export async function mountReview(host: HTMLElement, bridge: Bridge): Promise<()
   }
 
   function edit(file: ReviewFile) {
-    if (!snapshot || drafts.has(bridge.key) || busy || !file.editable || file.newContents === null)
+    if (!snapshot || draft !== undefined || busy || !file.editable || file.newContents === null)
       return;
-    drafts.set(bridge.key, { snapshot, path: file.path, contents: file.newContents });
+    draft = { snapshot, path: file.path, contents: file.newContents };
     if (file.oldPath && file.oldContents === file.newContents) {
       items.delete(file.path);
       viewer.removeItem(file.path);
@@ -462,25 +470,27 @@ export async function mountReview(host: HTMLElement, bridge: Bridge): Promise<()
 
   function cancel(file: ReviewFile) {
     if (busy) return;
-    drafts.delete(bridge.key);
+    draft = undefined;
     if (file.oldPath && file.oldContents === file.newContents) {
       items.delete(file.path);
       viewer.removeItem(file.path);
     }
     updateFile(file.path);
     render();
+    void load();
     message(`Draft discarded: ${file.path}`);
   }
 
   async function save(file: ReviewFile) {
-    const draft = drafts.get(bridge.key);
     if (!draft || draft.path !== file.path || busy) return;
     busy = true;
     updateFile(file.path);
     try {
+      const current = await bridge.snapshot();
+      const snapshotId = currentDraftSnapshot(draft, current);
       const contents = viewer.getEditor(file.path)?.getText() ?? draft.contents;
-      const result = await bridge.save(draft.snapshot.id, file.path, contents);
-      drafts.delete(bridge.key);
+      const result = await bridge.save(snapshotId, file.path, contents);
+      draft = undefined;
       file.newContents = contents;
       file.viewed = result.changed ? false : file.viewed;
       file.editable = false;
@@ -506,9 +516,7 @@ export async function mountReview(host: HTMLElement, bridge: Bridge): Promise<()
     if (file.oldPath && file.oldContents === file.newContents) {
       const renamed = document.createElement("span");
       renamed.textContent =
-        drafts.get(bridge.key)?.path === file.path
-          ? `Renamed from ${file.oldPath}`
-          : "Renamed — no content changes";
+        draft?.path === file.path ? `Renamed from ${file.oldPath}` : "Renamed — no content changes";
       controls.append(renamed);
     }
     const checkbox = document.createElement("input");
@@ -529,7 +537,7 @@ export async function mountReview(host: HTMLElement, bridge: Bridge): Promise<()
       mode.textContent = `Mode ${file.modeChange}`;
       controls.append(mode);
     }
-    const active = drafts.get(bridge.key)?.path === file.path;
+    const active = draft?.path === file.path;
     if (active) {
       const saveButton = button("Save", () => {
         void save(file);
@@ -540,7 +548,7 @@ export async function mountReview(host: HTMLElement, bridge: Bridge): Promise<()
       controls.append(saveButton, cancelButton);
     } else if (file.editable) {
       const editButton = button("Edit", () => edit(file));
-      editButton.disabled = busy || drafts.has(bridge.key);
+      editButton.disabled = busy || draft !== undefined;
       controls.append(editButton);
     } else {
       const reason = document.createElement("span");
@@ -569,7 +577,10 @@ export async function mountReview(host: HTMLElement, bridge: Bridge): Promise<()
     enableGutterUtility: true,
     enableLineSelection: true,
     onSelectedLinesChange: (selection) => {
-      if (selection) activePath = selection.id;
+      if (selection) {
+        activePath = selection.id;
+        persist();
+      }
     },
     onGutterUtilityClick: (range, context) => {
       addComment(context.item.id, range.side === "deletions" ? "old" : "new", range.start);
@@ -593,8 +604,10 @@ export async function mountReview(host: HTMLElement, bridge: Bridge): Promise<()
         },
       }),
     onItemEditChange: (event, item) => {
-      const draft = drafts.get(bridge.key);
-      if (draft?.path === item.id) draft.contents = event.editor.getText();
+      if (draft?.path === item.id) {
+        draft.contents = event.editor.getText();
+        persist();
+      }
     },
     onItemEditComplete: () => "reject",
     renderHeaderPrefix: (_file, context) => {
@@ -622,7 +635,7 @@ export async function mountReview(host: HTMLElement, bridge: Bridge): Promise<()
     const visible =
       entry !== undefined && entry.contentRect.width > 0 && entry.contentRect.height > 0;
     const returning = visible && wasVisible === false;
-    if (visible && !wasVisible && collapseViewedFiles()) render();
+    if (returning && collapseViewedFiles()) render();
     wasVisible = visible;
     if (returning) void load(true);
   });
@@ -665,15 +678,32 @@ export async function mountReview(host: HTMLElement, bridge: Bridge): Promise<()
     }
   }
 
+  function persist() {
+    bridge.onStateChange(
+      persistedReviewState({
+        version: 1,
+        initialized: true,
+        diffStyle,
+        overflow,
+        filter: search.value,
+        unviewedOnly: unviewed.checked,
+        collapsed: [...collapsed],
+        activePath: activePath ?? null,
+        draft: draft ?? null,
+        comments: commentState.drafts,
+      }),
+    );
+  }
+
   function render() {
     if (disposed || !snapshot) return;
     comments.refresh();
     const reviewable = snapshot.files.filter((file) => file.fingerprint !== null).length;
     progress.textContent = `${snapshot.files.filter((file) => file.viewed).length} / ${reviewable} Viewed${reviewable !== snapshot.files.length ? ` · ${snapshot.files.length - reviewable} unsupported` : ""}`;
-    refresh.disabled = busy || drafts.has(bridge.key);
+    refresh.disabled = busy || draft !== undefined;
     const visible = snapshot.files.filter(
       (file) =>
-        drafts.get(bridge.key)?.path === file.path ||
+        draft?.path === file.path ||
         ((!unviewed.checked || !file.viewed) &&
           [file.path, file.oldPath ?? ""].some((path) =>
             path.toLowerCase().includes(search.value.toLowerCase()),
@@ -732,7 +762,6 @@ export async function mountReview(host: HTMLElement, bridge: Bridge): Promise<()
         parent = folder;
       }
       if (!items.has(file.path)) {
-        const draft = drafts.get(bridge.key);
         const contents = draft?.path === file.path ? draft.contents : file.newContents;
         // A pure rename has no diff body to attach an editor to. Edit its full new file.
         const pureRenameDraft =
@@ -773,6 +802,7 @@ export async function mountReview(host: HTMLElement, bridge: Bridge): Promise<()
         viewer.clearSelectedLines();
         viewer.scrollTo({ type: "item", id: file.path, align: "start", behavior: "instant" });
         root.focus({ preventScroll: true });
+        persist();
         if (file.reason) message(`${file.path}: ${file.reason}`);
       });
       jump.title = file.oldPath ? `${file.oldPath} → ${file.path}` : file.path;
@@ -828,11 +858,12 @@ export async function mountReview(host: HTMLElement, bridge: Bridge): Promise<()
         return { ...item };
       }),
     );
+    persist();
   }
 
   async function load(automatic = false) {
     if (disposed) return;
-    if (busy || drafts.has(bridge.key)) {
+    if (busy || draft !== undefined) {
       if (!automatic) message("Save or Cancel the active draft before refreshing.");
       return;
     }
@@ -843,26 +874,46 @@ export async function mountReview(host: HTMLElement, bridge: Bridge): Promise<()
       const next = await bridge.snapshot();
       if (disposed) return;
       snapshot = next;
-      activePath = undefined;
+      if (!initialLoad) activePath = undefined;
       viewer.clearSelectedLines();
-      collapseViewedFiles();
+      if (!initialLoad || !restored.initialized) collapseViewedFiles();
+      initialLoad = false;
       items.clear();
       render();
+      if (activePath && viewer.getItem(activePath))
+        viewer.scrollTo({ type: "item", id: activePath, align: "start", behavior: "instant" });
       message(next.files.length ? (next.warning ?? "") : "No local changes compared with HEAD.");
     } catch (error) {
       message(errorMessage(error));
     } finally {
       busy = false;
       if (!disposed) {
-        refresh.disabled = drafts.has(bridge.key);
+        refresh.disabled = draft !== undefined;
         render();
       }
     }
   }
-  if (snapshot) {
-    collapseViewedFiles();
+  if (draft) {
+    const restoringDraft = draft;
     render();
+    if (activePath && viewer.getItem(activePath))
+      viewer.scrollTo({ type: "item", id: activePath, align: "start", behavior: "instant" });
     message("Restored unsaved draft. Save or Cancel explicitly.");
+    try {
+      const current = await bridge.snapshot();
+      if (draft === restoringDraft) {
+        currentDraftSnapshot(restoringDraft, current);
+        restoringDraft.snapshot = current;
+        snapshot = current;
+        initialLoad = false;
+        items.clear();
+        render();
+        if (activePath && viewer.getItem(activePath))
+          viewer.scrollTo({ type: "item", id: activePath, align: "start", behavior: "instant" });
+      }
+    } catch (error) {
+      if (draft === restoringDraft) message(errorMessage(error));
+    }
   } else await load();
   return () => {
     disposed = true;

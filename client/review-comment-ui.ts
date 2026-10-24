@@ -2,15 +2,16 @@ import type { DiffLineAnnotation } from "@pierre/diffs";
 import type { ReviewSnapshot } from "../shared/review";
 import {
   commentIsCurrent,
-  commentState,
   deliverComments,
   type CommentDraft,
+  type CommentState,
   type FeedbackAgent,
   type ReviewAttachment,
 } from "./review-comments";
 
 interface CommentUIOptions {
-  key: string;
+  state: CommentState;
+  onChange(): void;
   container: HTMLElement;
   colors: { foreground: string; surface1: string; border: string };
   button: (label: string, action: () => void) => HTMLButtonElement;
@@ -28,11 +29,12 @@ export interface CommentAnnotation {
 }
 
 export function createCommentUI(options: CommentUIOptions) {
-  const state = commentState(options.key);
+  const state = options.state;
   let disposed = false;
   let loading = false;
   let focusId: string | undefined;
   let revision = 0;
+  let previousDrafts = JSON.stringify(state.drafts);
   const { button } = options;
   const section = document.createElement("section");
   section.setAttribute("aria-label", "Review feedback");
@@ -59,6 +61,11 @@ export function createCommentUI(options: CommentUIOptions) {
 
   function refresh() {
     if (disposed) return;
+    const serializedDrafts = JSON.stringify(state.drafts);
+    if (serializedDrafts !== previousDrafts) {
+      previousDrafts = serializedDrafts;
+      options.onChange();
+    }
     const snapshot = options.snapshot();
     send.textContent = state.sending ? "Sending…" : `Send feedback (${state.drafts.length})`;
     send.disabled =

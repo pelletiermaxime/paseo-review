@@ -1,11 +1,12 @@
 import type { PluginWorkspacePanelProps } from "@getpaseo/plugin/client";
-import { usePaseo, useRpc } from "@getpaseo/plugin/client";
+import { usePaseo, useRpc, useTabState } from "@getpaseo/plugin/client";
 import { useEffect, useRef, useState } from "react";
 import { Platform, Text, View } from "react-native";
 import { openEditorRpc, saveRpc, snapshotRpc, viewedRpc } from "../shared/review";
+import { defaultReviewTabState, reviewHasDrafts, reviewTabSchema } from "./review-state";
 import { listFeedbackAgents, sendFeedback } from "./review-comments";
 
-export function ReviewPanel({ theme, layout, workspaceId, host }: PluginWorkspacePanelProps) {
+export function ReviewPanel({ theme, layout, workspaceId, host, tab }: PluginWorkspacePanelProps) {
   const container = useRef<View>(null);
   const [error, setError] = useState<string>();
   const snapshot = useRpc(snapshotRpc);
@@ -13,8 +14,14 @@ export function ReviewPanel({ theme, layout, workspaceId, host }: PluginWorkspac
   const save = useRpc(saveRpc);
   const openEditor = useRpc(openEditorRpc);
   const paseo = usePaseo();
-  const callbacks = useRef({ snapshot, viewed, save, openEditor, theme, paseo });
-  callbacks.current = { snapshot, viewed, save, openEditor, theme, paseo };
+  const [state, setState] = useTabState(tab, reviewTabSchema, defaultReviewTabState);
+  const initialState = useRef(state);
+  initialState.current = state;
+  const callbacks = useRef({ snapshot, viewed, save, openEditor, theme, paseo, setState, tab });
+  callbacks.current = { snapshot, viewed, save, openEditor, theme, paseo, setState, tab };
+  const modified = reviewHasDrafts(state);
+  useEffect(() => tab.setModified(modified), [tab, modified]);
+
   const web = layout.platform === "web" && Platform.OS === "web";
   useEffect(() => {
     if (!web) return;
@@ -27,7 +34,11 @@ export function ReviewPanel({ theme, layout, workspaceId, host }: PluginWorkspac
         if (!element || typeof element.appendChild !== "function")
           throw new Error("Paseo did not supply a browser DOM container.");
         cleanup = await mountReview(element, {
-          key: `${host.id}:${workspaceId}`,
+          state: initialState.current,
+          onStateChange: (next) => {
+            callbacks.current.setState(next);
+            callbacks.current.tab.setModified(reviewHasDrafts(next));
+          },
           colors: callbacks.current.theme.colors,
           snapshot: () => callbacks.current.snapshot({ workspaceId }),
           viewed: (snapshotId, path, value) =>

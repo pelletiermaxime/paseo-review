@@ -17,7 +17,7 @@ Choose a feature below, drive the actual Paseo panel, and check the observable r
 
 ## Launch and isolation
 
-Use Paseo **0.12.0** and the pinned dependencies. From this checkout:
+Use Paseo **0.13.0** and the pinned dependencies. From this checkout:
 
 ```sh
 vp install --frozen-lockfile
@@ -70,7 +70,7 @@ PYFIXTURE
 
 Before driving, or whenever the UI looks wrong:
 
-1. Run `paseo daemon status --json`: require a reachable 0.12.0 daemon. Match its server ID to the selected client host.
+1. Run `paseo daemon status --json`: require a reachable 0.13.0 daemon. Match its server ID to the selected client host.
 2. Run `paseo plugin ls --json`: require `workspace-review` enabled/running from this checkout. This proves daemon loading only.
 3. Select the disposable workspace. Open **New tab → Workspace Review**. Require the **Workspace review** region, **Refresh** button and **Changed files** navigation.
 4. Require `scratch/a.ts` and the modified `OVERVIEW.md` in the tree. If the panel is unavailable, stop UI verification and report the prerequisite; do not change global security settings to make it pass.
