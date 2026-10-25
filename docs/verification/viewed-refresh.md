@@ -21,7 +21,7 @@ Preconditions: [common fixture](../verification.md), no active edits or test com
 - **Toggle.** Scroll into `scratch/a.ts` and check **Viewed scratch/a.ts**. Require checked state, collapse and return to that same header. Uncheck: it expands without explicit navigation elsewhere. Repeat with `r`.
 - **Filter.** Mark it Viewed, enable **Unviewed only**, and require it hidden with recomputed folder totals. Disable the filter; require the checked entry again.
 - **Persist/reopen.** Refresh and close/reopen only the review panel. Require the marker still checked and the file collapsed. Expand it, switch to another Paseo tab and return: it collapses again.
-- **Exact version.** Change only `scratch/nested/b.ts` on disk and Refresh; `a.ts` stays Viewed. Change `a.ts` and Refresh; its marker clears. Service tests also cover acknowledging an older displayed version after disk contents change.
+- **Exact version.** Change only `scratch/nested/b.ts` on disk and Refresh; `a.ts` stays Viewed and collapsed. Change `a.ts` and Refresh; its marker clears and its updated diff expands. Repeat by changing a Viewed file while on another tab and returning, then by changing it while the app is closed and restoring the tab. A manually collapsed, unviewed file should keep its collapse state. Service tests also cover acknowledging an older displayed version after disk contents change.
 - **Initial opening.** Close the panel, change a fixture externally and reopen. Require current contents/counts without pressing Refresh.
 - **Retained return.** Switch to an existing agent/terminal tab without sending input. Change `scratch/a.ts` externally, return to the retained review tab and require updated contents/counts. A full page reload is not a substitute.
 - **Resize/idle.** Keep the panel visible, change a fixture externally, then resize. It should retain the snapshot until **Refresh** or a tab return. Resize is not activation; there is no timer update.
@@ -32,4 +32,5 @@ Preconditions: [common fixture](../verification.md), no active edits or test com
 
 - An edit or in-flight operation can skip auto-refresh. Save/Cancel, then Refresh or return again.
 - App reload restores each tab’s drafts and view state. Closing a modified tab requires confirmation and discards only that tab’s state.
+- Older saved tabs without Viewed-version metadata expand unviewed files once on restoration, including manual collapses. Subsequent manual collapses are preserved. Loading new plugin code requires a plugin/client reload; returning to an already-mounted tab only refreshes its data.
 - Restore fixture markers; never clear the user's entire Viewed store.

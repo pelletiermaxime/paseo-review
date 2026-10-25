@@ -8,6 +8,8 @@ import {
   persistedReviewState,
   reviewHasDrafts,
   reviewTabSchema,
+  reopenChangedViewedFiles,
+  viewedFileVersions,
 } from "../client/review-state";
 
 const file = {
@@ -42,6 +44,7 @@ it("restores independent tabs from JSON with view preferences, file edits and un
     filter: "example",
     unviewedOnly: true,
     collapsed: ["other.ts"],
+    viewedVersions: { "other.ts": file.fingerprint },
     activePath: file.path,
     draft: { snapshot, path: file.path, contents: "unsaved\n" },
     comments: [
@@ -66,6 +69,7 @@ it("restores independent tabs from JSON with view preferences, file edits and un
   restored.collapsed.push("example.ts");
   expect(secondTab.comments[0]!.input).toBe("unfinished feedback");
   expect(secondTab.collapsed).toEqual(["other.ts"]);
+  expect(secondTab.viewedVersions).toEqual({ "other.ts": file.fingerprint });
   expect(commentIsCurrent(secondTab.comments[0]!, snapshot)).toBe(true);
   expect(
     commentIsCurrent(secondTab.comments[0]!, {
@@ -73,6 +77,80 @@ it("restores independent tabs from JSON with view preferences, file edits and un
       files: [{ ...file, fingerprint: "external-change" }],
     }),
   ).toBe(false);
+});
+
+it("reopens changed Viewed files on refresh while retaining unchanged and manual collapses", () => {
+  const previous: ReviewSnapshot = {
+    ...snapshot,
+    files: [
+      { ...file, viewed: true },
+      { ...file, path: "other.ts", viewed: true },
+      { ...file, path: "manual.ts" },
+      { ...file, path: "removed.ts", viewed: true },
+    ],
+  };
+  const collapsed = new Set(previous.files.map((entry) => entry.path));
+  const current: ReviewSnapshot = {
+    ...previous,
+    id: "fresh-token",
+    files: [
+      { ...file, fingerprint: "changed-by-agent", newContents: "changed again\n" },
+      { ...file, path: "other.ts", viewed: true },
+      { ...file, path: "manual.ts", fingerprint: "manual-file-changed" },
+    ],
+  };
+  reopenChangedViewedFiles(collapsed, viewedFileVersions(previous), current);
+  expect([...collapsed]).toEqual(["other.ts", "manual.ts"]);
+});
+
+it("reopens stale Viewed collapses after restoring a tab, including cross-tab acknowledgements", () => {
+  const restored = reviewTabSchema.parse(
+    JSON.parse(
+      JSON.stringify(
+        persistedReviewState({
+          ...defaultReviewTabState,
+          initialized: true,
+          collapsed: [file.path, "manual.ts"],
+          viewedVersions: { [file.path]: file.fingerprint },
+        }),
+      ),
+    ),
+  );
+  for (const viewed of [false, true]) {
+    const collapsed = new Set(restored.collapsed);
+    reopenChangedViewedFiles(collapsed, restored.viewedVersions, {
+      ...snapshot,
+      files: [{ ...file, fingerprint: "new-version", viewed }],
+    });
+    expect([...collapsed]).toEqual(["manual.ts"]);
+  }
+});
+
+it("reopens unviewed files once when restoring state saved before Viewed versions were recorded", () => {
+  const { viewedVersions: _versions, ...legacy } = defaultReviewTabState;
+  const restored = reviewTabSchema.parse({
+    ...legacy,
+    initialized: true,
+    collapsed: [file.path, "other.ts"],
+  });
+  expect(restored.viewedVersions).toBeUndefined();
+  const collapsed = new Set(restored.collapsed);
+  const current = {
+    ...snapshot,
+    files: [file, { ...file, path: "other.ts", viewed: true }],
+  };
+  reopenChangedViewedFiles(collapsed, restored.viewedVersions, current);
+  expect([...collapsed]).toEqual(["other.ts"]);
+
+  const upgraded = persistedReviewState({
+    ...restored,
+    collapsed: [...collapsed],
+    viewedVersions: viewedFileVersions(current),
+  });
+  // After migration, manually collapsing an unviewed file is respected again.
+  collapsed.add(file.path);
+  reopenChangedViewedFiles(collapsed, upgraded.viewedVersions, current);
+  expect([...collapsed]).toEqual(["other.ts", file.path]);
 });
 
 it("treats all unsent comments as modified and rejects malformed or old persisted state", () => {

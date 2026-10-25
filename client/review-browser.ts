@@ -2,7 +2,13 @@ import { CodeView, parseDiffFromFile, preloadHighlighter } from "@pierre/diffs";
 import type { CodeViewItem, CodeViewOptions } from "@pierre/diffs";
 import { Editor } from "@pierre/diffs/edit";
 import type { PluginWorkspacePanelProps } from "@getpaseo/plugin/client";
-import { currentDraftSnapshot, persistedReviewState, type ReviewTabState } from "./review-state";
+import {
+  currentDraftSnapshot,
+  persistedReviewState,
+  reopenChangedViewedFiles,
+  viewedFileVersions,
+  type ReviewTabState,
+} from "./review-state";
 import type { CommentState } from "./review-comments";
 import type { ReviewFile, ReviewSnapshot } from "../shared/review";
 import { lineComment, type FeedbackAgent, type ReviewAttachment } from "./review-comments";
@@ -688,6 +694,7 @@ export async function mountReview(host: HTMLElement, bridge: Bridge): Promise<()
         filter: search.value,
         unviewedOnly: unviewed.checked,
         collapsed: [...collapsed],
+        viewedVersions: snapshot ? viewedFileVersions(snapshot) : restored.viewedVersions,
         activePath: activePath ?? null,
         draft: draft ?? null,
         comments: commentState.drafts,
@@ -873,10 +880,12 @@ export async function mountReview(host: HTMLElement, bridge: Bridge): Promise<()
     try {
       const next = await bridge.snapshot();
       if (disposed) return;
+      const previousViewed = snapshot ? viewedFileVersions(snapshot) : restored.viewedVersions;
       snapshot = next;
       if (!initialLoad) activePath = undefined;
       viewer.clearSelectedLines();
       if (!initialLoad || !restored.initialized) collapseViewedFiles();
+      reopenChangedViewedFiles(collapsed, previousViewed, next);
       initialLoad = false;
       items.clear();
       render();

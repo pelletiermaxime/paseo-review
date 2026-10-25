@@ -35,6 +35,7 @@ export const reviewTabSchema = z
     filter: z.string(),
     unviewedOnly: z.boolean(),
     collapsed: z.array(z.string()),
+    viewedVersions: z.record(z.string(), z.string()).optional(),
     activePath: z.string().nullable(),
     draft: z
       .object({
@@ -64,10 +65,34 @@ export const defaultReviewTabState: ReviewTabState = {
   filter: "",
   unviewedOnly: false,
   collapsed: [],
+  viewedVersions: {},
   activePath: null,
   draft: null,
   comments: [],
 };
+
+export function viewedFileVersions(snapshot: ReviewSnapshot): Record<string, string> {
+  return Object.fromEntries(
+    snapshot.files
+      .filter((file) => file.viewed && file.fingerprint !== null)
+      .map((file) => [file.path, file.fingerprint!]),
+  );
+}
+
+/** Older tabs lack collapse provenance; reopen their unviewed files once. */
+export function reopenChangedViewedFiles(
+  collapsed: Set<string>,
+  previousViewed: Record<string, string> | undefined,
+  current: ReviewSnapshot,
+): void {
+  if (previousViewed === undefined) {
+    for (const file of current.files) if (!file.viewed) collapsed.delete(file.path);
+    return;
+  }
+  const viewed = viewedFileVersions(current);
+  for (const [path, fingerprint] of Object.entries(previousViewed))
+    if (viewed[path] !== fingerprint) collapsed.delete(path);
+}
 
 /** Keep only the edited file's captured bytes; other files are read again on opening. */
 export function persistedReviewState(state: ReviewTabState): ReviewTabState {
