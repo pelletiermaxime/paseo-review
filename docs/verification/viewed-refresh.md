@@ -7,7 +7,7 @@ Acknowledge exact displayed versions and obtain current changes when opening or 
 - `viewed-toggle`: Collapse/return to the same header; unchecking expands.
 - `viewed-persist`: Persistence and per-file version invalidation.
 - `viewed-filter`: Unviewed-only paths and totals.
-- `refresh-activation`: Opening, retained-tab return, resize and edit guards.
+- `refresh-activation`: Opening, retained-tab return, split focus, resize and edit guards.
 - `refresh-comments`: Retained comments and stale-anchor rejection.
 
 ## How to get to it (user POV)
@@ -24,8 +24,9 @@ Preconditions: [common fixture](../verification.md), no active edits or test com
 - **Exact version.** Change only `scratch/nested/b.ts` on disk and Refresh; `a.ts` stays Viewed and collapsed. Change `a.ts` and Refresh; its marker clears and its updated diff expands. Repeat by changing a Viewed file while on another tab and returning, then by changing it while the app is closed and restoring the tab. A manually collapsed, unviewed file should keep its collapse state. Service tests also cover acknowledging an older displayed version after disk contents change.
 - **Initial opening.** Close the panel, change a fixture externally and reopen. Require current contents/counts without pressing Refresh.
 - **Retained return.** Switch to an existing agent/terminal tab without sending input. Change `scratch/a.ts` externally, return to the retained review tab and require updated contents/counts. A full page reload is not a substitute.
+- **Split return.** Keep the review visible beside another panel. Click the other panel, change `scratch/a.ts` externally, then click in the review content; require updated contents/counts. Repeat by moving keyboard focus out of and back into the review. Further clicks and focus changes within the review must not refresh again. If the first click is **Edit**, require the editor and its draft to remain open, with refresh paused.
 - **Resize/idle.** Keep the panel visible, change a fixture externally, then resize. It should retain the snapshot until **Refresh** or a tab return. Resize is not activation; there is no timer update.
-- **Edit guard.** Type a distinctive unsaved edit. Leave, change that file externally and return. Require the draft intact and Refresh paused. Cancel explicitly, then Refresh; require the external version.
+- **Edit guard.** Type a distinctive unsaved edit. Leave, change that file externally and return. Repeat while moving between two visible splits. Require the draft intact and Refresh paused. Cancel explicitly, then Refresh; require the external version.
 - **Comment guard.** Add a local comment, leave, change its file externally and return. Require text retained in local comments, stale status and blocked sending. An unrelated change must not stale it.
 
 ## Gotchas

@@ -15,6 +15,7 @@ import { lineComment, type FeedbackAgent, type ReviewAttachment } from "./review
 import { createCommentUI, type CommentAnnotation } from "./review-comment-ui";
 import { diffNavigationLines, reviewShortcut, reviewShortcuts } from "./review-shortcuts";
 import { createReviewHighlighter } from "./review-highlighter";
+import { observeReviewActivation } from "./review-activation";
 
 type Colors = PluginWorkspacePanelProps["theme"]["colors"];
 interface Bridge {
@@ -634,18 +635,11 @@ export async function mountReview(host: HTMLElement, bridge: Bridge): Promise<()
   const highlighter = createReviewHighlighter();
   const viewer = new CodeView({ ...options, diffStyle }, highlighter.pool);
   viewer.setup(viewport);
-  // Paseo retains inactive tabs in the DOM. Refresh only on hidden → visible transitions.
-  // The initial mount already loads a snapshot; resizing a visible panel is not activation.
-  let wasVisible: boolean | undefined;
-  const visibility = new ResizeObserver(([entry]) => {
-    const visible =
-      entry !== undefined && entry.contentRect.width > 0 && entry.contentRect.height > 0;
-    const returning = visible && wasVisible === false;
-    if (returning && collapseViewedFiles()) render();
-    wasVisible = visible;
-    if (returning) void load(true);
+  const stopActivation = observeReviewActivation(root, () => {
+    if (disposed || busy || draft !== undefined) return;
+    if (collapseViewedFiles()) render();
+    void load(true);
   });
-  visibility.observe(root);
 
   function appendLineCounts(row: HTMLElement, additions: number, deletions: number) {
     const counts = document.createElement("span");
@@ -926,7 +920,7 @@ export async function mountReview(host: HTMLElement, bridge: Bridge): Promise<()
   } else await load();
   return () => {
     disposed = true;
-    visibility.disconnect();
+    stopActivation();
     comments.dispose();
     viewer.cleanUp();
     highlighter.dispose();
