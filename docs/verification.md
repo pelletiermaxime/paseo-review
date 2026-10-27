@@ -4,16 +4,16 @@ Choose a feature below, drive the actual Paseo panel, and check the observable r
 
 ## Feature map
 
-| Feature            | What to test                                                                          | Recipe                                               |
-| ------------------ | ------------------------------------------------------------------------------------- | ---------------------------------------------------- |
-| Navigation         | Both entry points, tree/counts/search, layouts, wrapping, sticky headers and collapse | [Navigation](verification/navigation.md)             |
-| External editor    | Default/configured executable, tree launch, paths, host scope and draft preservation  | [External editor](verification/external-editor.md)   |
-| Renames            | Pure/edited moves, staged/unstaged paths, search and destination-only saves           | [Renames](verification/renames.md)                   |
-| Viewed and refresh | Versioned markers, persistence, filters, opening/returning and draft guards           | [Viewed and refresh](verification/viewed-refresh.md) |
-| Editing            | Save/Cancel, conflicts, draft retention, modes and read-only targets                  | [Editing](verification/editing.md)                   |
-| Comments           | Old/new anchors, local drafts, stale/send failures and readable agent feedback        | [Comments](verification/comments.md)                 |
-| Shortcuts          | Every shortcut, navigation order, focus and typing/composition guards                 | [Shortcuts](verification/shortcuts.md)               |
-| Rendering          | Themes, languages, background highlighting, worker cleanup and native fallback        | [Rendering](verification/rendering.md)               |
+| Feature            | What to test                                                                             | Recipe                                               |
+| ------------------ | ---------------------------------------------------------------------------------------- | ---------------------------------------------------- |
+| Navigation         | Both entry points, tree/counts/search, layouts, wrapping, sticky headers and collapse    | [Navigation](verification/navigation.md)             |
+| External editor    | Default/configured executable, tree launch, paths, host scope and draft preservation     | [External editor](verification/external-editor.md)   |
+| Renames            | Pure/edited moves, staged/unstaged paths, search and destination-only saves              | [Renames](verification/renames.md)                   |
+| Viewed and refresh | Versioned markers, persistence, filters, opening/returning and draft guards              | [Viewed and refresh](verification/viewed-refresh.md) |
+| Editing            | Save/Cancel, conflicts, draft retention, modes and read-only targets                     | [Editing](verification/editing.md)                   |
+| Comments           | Old/new anchors, local drafts, stale/send failures and readable agent feedback           | [Comments](verification/comments.md)                 |
+| Shortcuts          | Every shortcut, navigation order, focus and typing/composition guards                    | [Shortcuts](verification/shortcuts.md)               |
+| Rendering          | Themes, languages, main-thread highlighting, collapse responsiveness and native fallback | [Rendering](verification/rendering.md)               |
 
 ## Launch and isolation
 

@@ -7,8 +7,6 @@
   "files": [
     "paseo-plugin.json",
     "pnpm-workspace.yaml",
-    "patches/",
-    "scripts/",
     "LICENSES/",
     "LICENSE",
     "THIRD_PARTY_NOTICES.md",
@@ -25,14 +23,13 @@
   ],
   "type": "module",
   "scripts": {
-    "build:worker": "node scripts/build-diff-worker.mjs",
     "check": "vp check",
     "fmt": "vp fmt",
     "typecheck": "vp check --no-fmt --no-lint",
-    "test": "node scripts/build-diff-worker.mjs --check && vp test run"
+    "test": "vp test run"
   },
   "dependencies": {
-    "@pierre/diffs": "1.5.2"
+    "@pierre/diffs": "1.6.1"
   },
   "devDependencies": {
     "@getpaseo/client": "0.13.0",

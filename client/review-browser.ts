@@ -14,7 +14,6 @@ import type { ReviewFile, ReviewSnapshot } from "../shared/review";
 import { lineComment, type FeedbackAgent, type ReviewAttachment } from "./review-comments";
 import { createCommentUI, type CommentAnnotation } from "./review-comment-ui";
 import { diffNavigationLines, reviewShortcut, reviewShortcuts } from "./review-shortcuts";
-import { createReviewHighlighter } from "./review-highlighter";
 import { observeReviewActivation } from "./review-activation";
 
 type Colors = PluginWorkspacePanelProps["theme"]["colors"];
@@ -39,7 +38,7 @@ export async function mountReview(host: HTMLElement, bridge: Bridge): Promise<()
   await preloadHighlighter({
     themes: ["pierre-dark", "pierre-light"],
     langs: ["typescript", "javascript", "json", "text"],
-    preferredHighlighter: "shiki-js",
+    preferredHighlighter: "highlights",
   });
   let disposed = false;
   let busy = false;
@@ -593,7 +592,7 @@ export async function mountReview(host: HTMLElement, bridge: Bridge): Promise<()
       addComment(context.item.id, range.side === "deletions" ? "old" : "new", range.start);
     },
     renderAnnotation: (annotation) => comments.renderAnnotation(annotation.metadata.id),
-    preferredHighlighter: "shiki-js",
+    preferredHighlighter: "highlights",
     createEditor: (type, config) =>
       new Editor(type, {
         ...config,
@@ -632,8 +631,7 @@ export async function mountReview(host: HTMLElement, bridge: Bridge): Promise<()
       return file ? header(file) : null;
     },
   };
-  const highlighter = createReviewHighlighter();
-  const viewer = new CodeView({ ...options, diffStyle }, highlighter.pool);
+  const viewer = new CodeView({ ...options, diffStyle });
   viewer.setup(viewport);
   const stopActivation = observeReviewActivation(root, () => {
     if (disposed || busy || draft !== undefined) return;
@@ -923,7 +921,6 @@ export async function mountReview(host: HTMLElement, bridge: Bridge): Promise<()
     stopActivation();
     comments.dispose();
     viewer.cleanUp();
-    highlighter.dispose();
     root.remove();
   };
 }
