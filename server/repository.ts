@@ -3,7 +3,7 @@ import { lstat, open, realpath, rename, unlink } from "node:fs/promises";
 import path from "node:path";
 import { createHash, randomUUID } from "node:crypto";
 import { execCommand } from "@getpaseo/plugin/server";
-import type { ReviewFile } from "../shared/review";
+import type { ReviewComparison, ReviewFile } from "../shared/review";
 import { detectRenames } from "./renames";
 
 export const MAX_FILE_BYTES = 512 * 1024;
@@ -115,14 +115,56 @@ export interface CapturedFile {
   file: ReviewFile;
   disk: DiskFile | null;
 }
+
+async function branchBase(root: string, requested?: string) {
+  const candidates = requested ? [requested] : [];
+  if (!requested) {
+    try {
+      candidates.push((await git(root, ["symbolic-ref", "refs/remotes/origin/HEAD"])).trim());
+    } catch {
+      // Local repositories may not have a remote default branch.
+    }
+    candidates.push("origin/main", "origin/master", "main", "master");
+  }
+  for (const ref of candidates) {
+    let commit: string;
+    try {
+      commit = (
+        await git(root, ["rev-parse", "--verify", "--end-of-options", `${ref}^{commit}`])
+      ).trim();
+    } catch {
+      if (requested) throw new Error(`Base branch '${requested}' does not resolve to a commit.`);
+      continue;
+    }
+    try {
+      return {
+        ref: ref.replace(/^refs\/(heads|remotes)\//, ""),
+        commit: (await git(root, ["merge-base", "HEAD", commit])).trim(),
+      };
+    } catch {
+      throw new Error(`No common ancestor with '${ref}'. Choose a related base branch.`);
+    }
+  }
+  throw new Error("Cannot find a base branch. Enter a base branch such as origin/main.");
+}
+
 export async function capture(
   root: string,
-): Promise<{ files: CapturedFile[]; warning: string | null }> {
+  comparison: ReviewComparison = "head-worktree",
+  requestedBase?: string,
+): Promise<{ files: CapturedFile[]; warning: string; baseRef: string | null }> {
   let head: string | null;
   try {
     head = (await git(root, ["rev-parse", "--verify", "HEAD"])).trim();
   } catch {
     head = null;
+  }
+  let baseRef: string | null = null;
+  if (comparison === "branch-worktree") {
+    if (!head) throw new Error("Whole branch review requires a committed HEAD.");
+    const base = await branchBase(root, requestedBase);
+    head = base.commit;
+    baseRef = base.ref;
   }
   const tracked = await git(
     root,
@@ -225,7 +267,10 @@ export async function capture(
     files.push({ file, disk: file.editable ? disk : null });
   }
   let warning =
-    "HEAD → worktree includes staged, unstaged and untracked files. Renames use Git's 50% similarity threshold. Refreshes when you return to this tab; paused while editing.";
+    (baseRef
+      ? `Merge base with ${baseRef} → worktree includes committed branch changes plus staged, unstaged and untracked files. Uses local refs; fetch separately to update the base.`
+      : "HEAD → worktree includes staged, unstaged and untracked files.") +
+    " Renames use Git's 50% similarity threshold. Refreshes when you return to this tab; paused while editing.";
   const renamedSources = new Set<string>();
   try {
     const matches = await detectRenames(files.map(({ file }) => file));
@@ -247,7 +292,7 @@ export async function capture(
   } catch {
     warning += " Rename detection failed; unmatched files are shown separately.";
   }
-  return { files: files.filter(({ file }) => !renamedSources.has(file.path)), warning };
+  return { files: files.filter(({ file }) => !renamedSources.has(file.path)), warning, baseRef };
 }
 export async function saveFile(
   root: string,

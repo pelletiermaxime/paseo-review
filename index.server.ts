@@ -22,7 +22,12 @@ export default function contribute(server: PluginServerContext) {
     return workspace.directory;
   }
   server.handle(snapshotRpc, async (input, context) =>
-    service.snapshot(input.workspaceId, await directory(context, input.workspaceId)),
+    service.snapshot(
+      input.workspaceId,
+      await directory(context, input.workspaceId),
+      input.comparison,
+      input.baseRef,
+    ),
   );
   server.handle(viewedRpc, (input) =>
     service.viewed(input.workspaceId, input.snapshotId, input.path, input.viewed),

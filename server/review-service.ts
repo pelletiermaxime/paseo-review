@@ -2,7 +2,7 @@ import { lstat, mkdir, readFile, rename, writeFile } from "node:fs/promises";
 import { randomUUID } from "node:crypto";
 import path from "node:path";
 import { z } from "zod";
-import type { ReviewSnapshot } from "../shared/review";
+import type { ReviewComparison, ReviewSnapshot } from "../shared/review";
 import { capture, hash, repositoryRoot, saveFile, validatePath } from "./repository";
 import type { CapturedFile } from "./repository";
 
@@ -10,6 +10,8 @@ const stateSchema = z.record(z.string(), z.string());
 interface Session {
   workspaceId: string;
   root: string;
+  comparison: ReviewComparison;
+  baseRef: string | null;
   expires: number;
   files: Map<string, CapturedFile>;
 }
@@ -30,18 +32,35 @@ export class ReviewService {
       );
     }
   }
-  private key(workspaceId: string, root: string, relative: string) {
-    return hash(JSON.stringify([workspaceId, root, "head-worktree", relative]));
+  private key(
+    workspaceId: string,
+    root: string,
+    relative: string,
+    comparison: ReviewComparison,
+    baseRef: string | null,
+  ) {
+    return hash(
+      JSON.stringify(
+        comparison === "head-worktree"
+          ? [workspaceId, root, comparison, relative]
+          : [workspaceId, root, comparison, baseRef, relative],
+      ),
+    );
   }
-  async snapshot(workspaceId: string, directory: string): Promise<ReviewSnapshot> {
+  async snapshot(
+    workspaceId: string,
+    directory: string,
+    comparison: ReviewComparison = "head-worktree",
+    requestedBase?: string,
+  ): Promise<ReviewSnapshot> {
     const root = await repositoryRoot(directory);
-    const { files, warning } = await capture(root);
+    const { files, warning, baseRef } = await capture(root, comparison, requestedBase);
     await this.writes.catch(() => {});
     const state = await this.state();
     for (const { file } of files)
       file.viewed =
         file.fingerprint !== null &&
-        state[this.key(workspaceId, root, file.path)] === file.fingerprint;
+        state[this.key(workspaceId, root, file.path, comparison, baseRef)] === file.fingerprint;
     // Bound retained snapshots, including the original bytes used for conflicts.
     for (const [id, session] of this.sessions)
       if (session.expires < Date.now()) this.sessions.delete(id);
@@ -50,13 +69,16 @@ export class ReviewService {
     this.sessions.set(id, {
       workspaceId,
       root,
+      comparison,
+      baseRef,
       expires: Date.now() + 60 * 60_000,
       files: new Map(files.map((file) => [file.file.path, file])),
     });
     return {
       id,
       root,
-      comparison: "head-worktree",
+      comparison,
+      baseRef,
       files: files.map((file) => file.file),
       warning,
     };
@@ -74,7 +96,7 @@ export class ReviewService {
   async viewed(workspaceId: string, snapshotId: string, relative: string, viewed: boolean) {
     const { session, file } = this.displayed(workspaceId, snapshotId, relative);
     if (!file.file.fingerprint) throw new Error("Unsupported files cannot be marked Viewed.");
-    const key = this.key(workspaceId, session.root, relative);
+    const key = this.key(workspaceId, session.root, relative, session.comparison, session.baseRef);
     const fingerprint = file.file.fingerprint;
     const operation = this.writes
       .catch(() => {})

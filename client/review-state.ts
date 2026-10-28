@@ -1,5 +1,5 @@
 import { z } from "zod";
-import { snapshotRpc, type ReviewSnapshot } from "../shared/review";
+import { reviewComparison, snapshotRpc, type ReviewSnapshot } from "../shared/review";
 
 const contextLine = z.object({
   oldLineNumber: z.number().int().positive().nullable(),
@@ -30,6 +30,8 @@ export const reviewTabSchema = z
   .object({
     version: z.literal(1),
     initialized: z.boolean(),
+    comparison: reviewComparison.default("head-worktree"),
+    baseRef: z.string().default(""),
     diffStyle: z.enum(["unified", "split"]),
     overflow: z.enum(["wrap", "scroll"]),
     filter: z.string(),
@@ -60,6 +62,8 @@ export type EditDraft = NonNullable<ReviewTabState["draft"]>;
 export const defaultReviewTabState: ReviewTabState = {
   version: 1,
   initialized: false,
+  comparison: "head-worktree",
+  baseRef: "",
   diffStyle: "unified",
   overflow: "wrap",
   filter: "",
@@ -118,6 +122,8 @@ export function currentDraftSnapshot(draft: EditDraft, current: ReviewSnapshot):
   const latest = current.files.find((file) => file.path === draft.path);
   if (
     current.root !== draft.snapshot.root ||
+    current.comparison !== draft.snapshot.comparison ||
+    (current.baseRef ?? null) !== (draft.snapshot.baseRef ?? null) ||
     !original?.fingerprint ||
     !latest?.editable ||
     latest.fingerprint !== original.fingerprint

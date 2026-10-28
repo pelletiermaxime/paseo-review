@@ -79,6 +79,17 @@ it("restores independent tabs from JSON with view preferences, file edits and un
   ).toBe(false);
 });
 
+it("persists branch selection and defaults legacy tabs to uncommitted changes", () => {
+  const { comparison: _comparison, baseRef: _baseRef, ...legacy } = defaultReviewTabState;
+  expect(reviewTabSchema.parse(legacy)).toMatchObject({ comparison: "head-worktree", baseRef: "" });
+  const branch = persistedReviewState({
+    ...defaultReviewTabState,
+    comparison: "branch-worktree",
+    baseRef: "origin/develop",
+  });
+  expect(reviewTabSchema.parse(JSON.parse(JSON.stringify(branch)))).toEqual(branch);
+});
+
 it("reopens changed Viewed files on refresh while retaining unchanged and manual collapses", () => {
   const previous: ReviewSnapshot = {
     ...snapshot,
@@ -174,6 +185,8 @@ it("rebinds a restored edit to a fresh save token only when the root and capture
   expect(currentDraftSnapshot(draft, fresh)).toBe("fresh-token");
   for (const current of [
     { ...fresh, root: "/other-repository" },
+    { ...fresh, comparison: "branch-worktree" as const },
+    { ...fresh, baseRef: "other-base" },
     { ...fresh, files: [] },
     { ...fresh, files: [{ ...file, fingerprint: "external-change" }] },
     { ...fresh, files: [{ ...file, editable: false }] },

@@ -40,7 +40,8 @@ export function ReviewPanel({ theme, layout, workspaceId, host, tab }: PluginWor
             callbacks.current.tab.setModified(reviewHasDrafts(next));
           },
           colors: callbacks.current.theme.colors,
-          snapshot: () => callbacks.current.snapshot({ workspaceId }),
+          snapshot: (comparison, baseRef) =>
+            callbacks.current.snapshot({ workspaceId, comparison, baseRef }),
           viewed: (snapshotId, path, value) =>
             callbacks.current.viewed({ workspaceId, snapshotId, path, viewed: value }),
           save: (snapshotId, path, contents) =>

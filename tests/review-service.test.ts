@@ -15,6 +15,7 @@ import {
 } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
+import { fileURLToPath } from "node:url";
 import { ReviewService } from "../server/review-service";
 import { validatePath, MAX_FILE_BYTES } from "../server/repository";
 
@@ -43,6 +44,118 @@ async function baseline(root: string) {
   await execute("git", ["-C", root, "update-ref", "refs/review-test/base", stdout.trim()]);
   await execute("git", ["-C", root, "symbolic-ref", "HEAD", "refs/review-test/base"]);
 }
+
+async function branchFixture() {
+  const fixtureState = await fixture();
+  const { root } = fixtureState;
+  await rm(root, { recursive: true });
+  // Reuse real history in an isolated clone without creating any commits.
+  await execute("git", [
+    "clone",
+    "--quiet",
+    "--local",
+    "--no-hardlinks",
+    fileURLToPath(new URL("..", import.meta.url)),
+    root,
+  ]);
+  await execute("git", ["-C", root, "branch", "review-feature"]);
+  await execute("git", ["-C", root, "symbolic-ref", "HEAD", "refs/heads/review-feature"]);
+  await execute("git", ["-C", root, "update-ref", "refs/heads/main", "HEAD~1"]);
+  await execute("git", ["-C", root, "update-ref", "refs/remotes/origin/main", "HEAD~1"]);
+  await execute("git", [
+    "-C",
+    root,
+    "symbolic-ref",
+    "refs/remotes/origin/HEAD",
+    "refs/remotes/origin/main",
+  ]);
+  return fixtureState;
+}
+
+it("switches between uncommitted and whole-branch changes using the default base", async () => {
+  const { root, service } = await branchFixture();
+  await writeFile(path.join(root, "local.txt"), "local addition\n");
+  await writeFile(path.join(root, "README.md"), "staged readme\n");
+  await execute("git", ["-C", root, "add", "README.md"]);
+  await writeFile(path.join(root, "README.md"), "unstaged readme\n");
+  const index = await readFile(path.join(root, ".git/index"));
+  const objects = (await execute("git", ["-C", root, "count-objects", "-v"])).stdout;
+  const local = await service.snapshot("workspace", root);
+  const branch = await service.snapshot("workspace", root, "branch-worktree");
+  expect(local.files.map((file) => file.path)).toEqual(["README.md", "local.txt"]);
+  expect(branch.comparison).toBe("branch-worktree");
+  expect(branch.baseRef).toBe("origin/main");
+  const changed = (await execute("git", ["-C", root, "diff", "--name-only", "HEAD~1", "--"])).stdout
+    .trim()
+    .split("\n");
+  expect(branch.files.map((file) => file.path).sort()).toEqual([...changed, "local.txt"].sort());
+  expect(branch.files.find((file) => file.path === "README.md")?.newContents).toBe(
+    "unstaged readme\n",
+  );
+  for (const committedPath of changed) {
+    const original = await execute("git", ["-C", root, "show", `HEAD~1:${committedPath}`]).then(
+      ({ stdout }) => stdout,
+      () => null,
+    );
+    expect(branch.files.find((file) => file.path === committedPath)?.oldContents).toBe(original);
+  }
+  expect(await readFile(path.join(root, ".git/index"))).toEqual(index);
+  expect((await execute("git", ["-C", root, "count-objects", "-v"])).stdout).toBe(objects);
+});
+
+it("uses the common ancestor rather than showing changes made only on the base branch", async () => {
+  const { root, service } = await branchFixture();
+  await execute("git", ["-C", root, "update-ref", "refs/heads/main", "HEAD"]);
+  await execute("git", ["-C", root, "reset", "--hard", "HEAD~1"]);
+  const snapshot = await service.snapshot("workspace", root, "branch-worktree", "main");
+  expect(snapshot.files).toEqual([]);
+  expect(snapshot.baseRef).toBe("main");
+});
+
+it("keeps Viewed acknowledgements independent between scopes and base branches", async () => {
+  const { root, state, service } = await branchFixture();
+  await writeFile(path.join(root, "local.txt"), "local addition\n");
+  const local = await service.snapshot("workspace", root);
+  await service.viewed("workspace", local.id, "local.txt", true);
+  const branch = await service.snapshot("workspace", root, "branch-worktree", "main");
+  expect(branch.files.find((file) => file.path === "local.txt")?.viewed).toBe(false);
+  await service.viewed("workspace", branch.id, "local.txt", true);
+  const restarted = new ReviewService(state);
+  expect(
+    (await restarted.snapshot("workspace", root, "branch-worktree", "main")).files.find(
+      (file) => file.path === "local.txt",
+    )?.viewed,
+  ).toBe(true);
+  expect(
+    (await restarted.snapshot("workspace", root, "branch-worktree", "origin/main")).files.find(
+      (file) => file.path === "local.txt",
+    )?.viewed,
+  ).toBe(false);
+  await service.viewed("workspace", branch.id, "local.txt", false);
+  expect(
+    (await restarted.snapshot("workspace", root)).files.find((file) => file.path === "local.txt")
+      ?.viewed,
+  ).toBe(true);
+  await service.save("workspace", branch.id, "local.txt", "saved from branch review\n");
+  expect(await readFile(path.join(root, "local.txt"), "utf8")).toBe("saved from branch review\n");
+});
+
+it("reports missing or invalid branch bases without silently using HEAD", async () => {
+  const { root, service } = await fixture();
+  await expect(service.snapshot("workspace", root, "branch-worktree")).rejects.toThrow(
+    "committed HEAD",
+  );
+  const branch = await branchFixture();
+  for (const base of ["missing-branch", "--all"])
+    await expect(
+      branch.service.snapshot("workspace", branch.root, "branch-worktree", base),
+    ).rejects.toThrow("does not resolve to a commit");
+  await execute("git", ["-C", branch.root, "update-ref", "-d", "refs/remotes/origin/main"]);
+  await execute("git", ["-C", branch.root, "update-ref", "-d", "refs/heads/main"]);
+  await expect(
+    branch.service.snapshot("workspace", branch.root, "branch-worktree"),
+  ).rejects.toThrow("Cannot find a base branch");
+});
 
 it("resolves external editor targets only from the matching workspace snapshot", async () => {
   const { root, service } = await fixture();

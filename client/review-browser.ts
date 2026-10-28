@@ -10,7 +10,7 @@ import {
   type ReviewTabState,
 } from "./review-state";
 import type { CommentState } from "./review-comments";
-import type { ReviewFile, ReviewSnapshot } from "../shared/review";
+import type { ReviewComparison, ReviewFile, ReviewSnapshot } from "../shared/review";
 import { lineComment, type FeedbackAgent, type ReviewAttachment } from "./review-comments";
 import { createCommentUI, type CommentAnnotation } from "./review-comment-ui";
 import { diffNavigationLines, reviewShortcut, reviewShortcuts } from "./review-shortcuts";
@@ -21,7 +21,7 @@ interface Bridge {
   state: ReviewTabState;
   onStateChange(state: ReviewTabState): void;
   colors: Colors;
-  snapshot(): Promise<ReviewSnapshot>;
+  snapshot(comparison: ReviewComparison, baseRef: string): Promise<ReviewSnapshot>;
   viewed(snapshotId: string, path: string, value: boolean): Promise<{ viewed: boolean }>;
   save(snapshotId: string, path: string, contents: string): Promise<{ changed: boolean }>;
   openEditor(snapshotId: string, path: string): Promise<{ launched: boolean }>;
@@ -46,6 +46,8 @@ export async function mountReview(host: HTMLElement, bridge: Bridge): Promise<()
   let draft = restored.draft ?? undefined;
   const commentState: CommentState = { drafts: restored.comments, sending: false };
   let snapshot: ReviewSnapshot | undefined = draft?.snapshot;
+  let comparison = draft?.snapshot.comparison ?? restored.comparison;
+  let baseRef = restored.baseRef;
   let diffStyle = restored.diffStyle;
   let overflow = restored.overflow;
   let initialLoad = true;
@@ -95,6 +97,60 @@ export async function mountReview(host: HTMLElement, bridge: Bridge): Promise<()
   };
   const refresh = button("Refresh", () => {
     void load();
+  });
+  const scope = document.createElement("select");
+  scope.setAttribute("aria-label", "Review scope");
+  scope.style.cssText = `font:inherit;color:${bridge.colors.foreground};background:${bridge.colors.surface1};border:1px solid ${bridge.colors.border};border-radius:5px;padding:5px 8px`;
+  for (const [value, label] of [
+    ["head-worktree", "Uncommitted changes"],
+    ["branch-worktree", "Whole branch"],
+  ]) {
+    const option = document.createElement("option");
+    option.value = value!;
+    option.textContent = label!;
+    scope.append(option);
+  }
+  scope.value = comparison;
+  const base = document.createElement("input");
+  base.type = "text";
+  base.value = baseRef;
+  base.maxLength = 200;
+  base.placeholder = "Base branch (auto)";
+  base.setAttribute("aria-label", "Base branch");
+  base.title =
+    "Compare from the common ancestor with this branch. Leave empty to detect the default branch.";
+  base.style.cssText = scope.style.cssText + ";width:170px";
+  function updateScopeControls() {
+    scope.disabled = base.disabled = busy || draft !== undefined;
+    base.hidden = comparison !== "branch-worktree";
+    base.placeholder = snapshot?.baseRef ?? "Base branch (auto)";
+    scope.title = draft ? "Save or Cancel the active edit before switching review scope." : "";
+  }
+  function changeScope() {
+    if (busy || draft !== undefined) return;
+    comparison = scope.value as ReviewComparison;
+    baseRef = base.value.trim();
+    snapshot = undefined;
+    initialLoad = false;
+    collapsed.clear();
+    activePath = undefined;
+    items.clear();
+    viewer.clearSelectedLines();
+    viewer.setItems([]);
+    tree.replaceChildren();
+    progress.textContent = "";
+    persist();
+    comments.refresh();
+    updateScopeControls();
+    void load();
+  }
+  scope.addEventListener("change", changeScope);
+  base.addEventListener("change", changeScope);
+  base.addEventListener("keydown", (event) => {
+    if (event.key === "Enter" && !event.isComposing) {
+      event.preventDefault();
+      base.blur();
+    }
   });
   const layout = button(diffStyle === "unified" ? "Split" : "Unified", () => {
     diffStyle = diffStyle === "unified" ? "split" : "unified";
@@ -158,6 +214,8 @@ export async function mountReview(host: HTMLElement, bridge: Bridge): Promise<()
   });
   toolbar.append(
     progress,
+    scope,
+    base,
     refresh,
     layout,
     collapseAll,
@@ -431,6 +489,7 @@ export async function mountReview(host: HTMLElement, bridge: Bridge): Promise<()
       viewer.updateItem({ ...item });
     }
     refresh.disabled = busy || draft !== undefined;
+    updateScopeControls();
     comments.refresh();
     persist();
   }
@@ -492,7 +551,7 @@ export async function mountReview(host: HTMLElement, bridge: Bridge): Promise<()
     busy = true;
     updateFile(file.path);
     try {
-      const current = await bridge.snapshot();
+      const current = await bridge.snapshot(comparison, baseRef);
       const snapshotId = currentDraftSnapshot(draft, current);
       const contents = viewer.getEditor(file.path)?.getText() ?? draft.contents;
       const result = await bridge.save(snapshotId, file.path, contents);
@@ -681,12 +740,14 @@ export async function mountReview(host: HTMLElement, bridge: Bridge): Promise<()
       persistedReviewState({
         version: 1,
         initialized: true,
+        comparison,
+        baseRef,
         diffStyle,
         overflow,
         filter: search.value,
         unviewedOnly: unviewed.checked,
         collapsed: [...collapsed],
-        viewedVersions: snapshot ? viewedFileVersions(snapshot) : restored.viewedVersions,
+        viewedVersions: snapshot ? viewedFileVersions(snapshot) : {},
         activePath: activePath ?? null,
         draft: draft ?? null,
         comments: commentState.drafts,
@@ -695,6 +756,7 @@ export async function mountReview(host: HTMLElement, bridge: Bridge): Promise<()
   }
 
   function render() {
+    updateScopeControls();
     if (disposed || !snapshot) return;
     comments.refresh();
     const reviewable = snapshot.files.filter((file) => file.fingerprint !== null).length;
@@ -868,11 +930,20 @@ export async function mountReview(host: HTMLElement, bridge: Bridge): Promise<()
     }
     busy = true;
     refresh.disabled = true;
-    message("Reading local changes…");
+    updateScopeControls();
+    message(
+      comparison === "branch-worktree"
+        ? "Reading whole branch changes…"
+        : "Reading uncommitted changes…",
+    );
     try {
-      const next = await bridge.snapshot();
+      const next = await bridge.snapshot(comparison, baseRef);
       if (disposed) return;
-      const previousViewed = snapshot ? viewedFileVersions(snapshot) : restored.viewedVersions;
+      const previousViewed = snapshot
+        ? viewedFileVersions(snapshot)
+        : initialLoad
+          ? restored.viewedVersions
+          : {};
       snapshot = next;
       if (!initialLoad) activePath = undefined;
       viewer.clearSelectedLines();
@@ -883,7 +954,13 @@ export async function mountReview(host: HTMLElement, bridge: Bridge): Promise<()
       render();
       if (activePath && viewer.getItem(activePath))
         viewer.scrollTo({ type: "item", id: activePath, align: "start", behavior: "instant" });
-      message(next.files.length ? (next.warning ?? "") : "No local changes compared with HEAD.");
+      message(
+        next.files.length
+          ? (next.warning ?? "")
+          : comparison === "branch-worktree"
+            ? `No changes compared with the merge base of ${next.baseRef}.`
+            : "No uncommitted changes compared with HEAD.",
+      );
     } catch (error) {
       message(errorMessage(error));
     } finally {
@@ -901,7 +978,7 @@ export async function mountReview(host: HTMLElement, bridge: Bridge): Promise<()
       viewer.scrollTo({ type: "item", id: activePath, align: "start", behavior: "instant" });
     message("Restored unsaved draft. Save or Cancel explicitly.");
     try {
-      const current = await bridge.snapshot();
+      const current = await bridge.snapshot(comparison, baseRef);
       if (draft === restoringDraft) {
         currentDraftSnapshot(restoringDraft, current);
         restoringDraft.snapshot = current;
