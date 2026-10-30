@@ -116,6 +116,26 @@ export interface CapturedFile {
   disk: DiskFile | null;
 }
 
+/** Acknowledge unavailable content without loading it; any metadata change invalidates it. */
+async function unavailableFingerprint(root: string, relative: string, baseEntry: string) {
+  const target = await validatePath(root, relative);
+  const stat = await lstat(target, { bigint: true }).catch((error: NodeJS.ErrnoException) => {
+    if (error.code === "ENOENT") return null;
+    throw error;
+  });
+  return hash(
+    JSON.stringify([
+      "unavailable",
+      relative,
+      baseEntry,
+      stat &&
+        [stat.dev, stat.ino, stat.mode, stat.nlink, stat.size, stat.mtimeNs, stat.ctimeNs].map(
+          String,
+        ),
+    ]),
+  );
+}
+
 async function branchBase(root: string, requested?: string) {
   const candidates = requested ? [requested] : [];
   if (!requested) {
@@ -202,11 +222,8 @@ export async function capture(
       kind: "unsupported",
     };
     let disk: DiskFile | null = null;
+    let baseEntry: string | null = head ? null : "";
     try {
-      if (bytes >= MAX_TOTAL_BYTES)
-        throw new Error(
-          "Snapshot exceeds the 8 MiB content budget; remaining files are read-only.",
-        );
       let base: Buffer | null = null;
       let baseMode: string | null = null;
       if (head) {
@@ -218,17 +235,22 @@ export async function capture(
           "--",
           relative,
         ]);
+        baseEntry = tree;
         if (tree) {
           const match = /^(\d+) blob ([a-f0-9]+)\t/.exec(tree);
           if (!match || !["100644", "100755"].includes(match[1]!))
             throw new Error("Git symlinks and submodules are read-only.");
           baseMode = match[1]!;
           baseModes.set(relative, baseMode);
+          if (bytes >= MAX_TOTAL_BYTES)
+            throw new Error("Snapshot exceeds the 8 MiB content budget; diff unavailable.");
           if (Number(await git(root, ["cat-file", "-s", match[2]!])) > MAX_FILE_BYTES)
             throw new Error("Original file exceeds the 512 KiB content limit.");
           base = Buffer.from(await git(root, ["cat-file", "blob", match[2]!]), "latin1");
         }
       }
+      if (bytes >= MAX_TOTAL_BYTES)
+        throw new Error("Snapshot exceeds the 8 MiB content budget; diff unavailable.");
       disk = await readCurrent(root, relative);
       bytes += (base?.length ?? 0) + (disk?.bytes.length ?? 0);
       if (bytes > MAX_TOTAL_BYTES)
@@ -262,6 +284,10 @@ export async function capture(
       file.oldContents = null;
       file.newContents = null;
       file.fingerprint = null;
+      file.viewedFingerprint =
+        baseEntry === null
+          ? null
+          : await unavailableFingerprint(root, relative, baseEntry).catch(() => null);
       file.editable = false;
     }
     files.push({ file, disk: file.editable ? disk : null });

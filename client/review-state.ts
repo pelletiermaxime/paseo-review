@@ -1,5 +1,10 @@
 import { z } from "zod";
-import { reviewComparison, snapshotRpc, type ReviewSnapshot } from "../shared/review";
+import {
+  reviewComparison,
+  reviewFingerprint,
+  snapshotRpc,
+  type ReviewSnapshot,
+} from "../shared/review";
 
 const contextLine = z.object({
   oldLineNumber: z.number().int().positive().nullable(),
@@ -78,8 +83,8 @@ export const defaultReviewTabState: ReviewTabState = {
 export function viewedFileVersions(snapshot: ReviewSnapshot): Record<string, string> {
   return Object.fromEntries(
     snapshot.files
-      .filter((file) => file.viewed && file.fingerprint !== null)
-      .map((file) => [file.path, file.fingerprint!]),
+      .filter((file) => file.viewed && reviewFingerprint(file) !== null)
+      .map((file) => [file.path, reviewFingerprint(file)!]),
   );
 }
 

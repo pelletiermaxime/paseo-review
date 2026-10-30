@@ -385,6 +385,87 @@ it("handles unsupported encodings and oversized content without editable partial
   expect(snapshot.files.every((f) => !f.editable && f.reason)).toBe(true);
   expect(snapshot.files.find((f) => f.path === "large")?.newContents).toBeNull();
 });
+
+it("persists Viewed for unavailable files and invalidates same-size changes without capturing content", async () => {
+  const { root, service } = await fixture();
+  const target = path.join(root, "large.txt");
+  await writeFile(target, Buffer.alloc(MAX_FILE_BYTES + 1, 65));
+  await writeFile(path.join(root, "binary"), Buffer.from([0, 1]));
+  const first = await service.snapshot("workspace", root);
+  for (const file of first.files) {
+    expect(file).toMatchObject({
+      fingerprint: null,
+      oldContents: null,
+      newContents: null,
+      editable: false,
+    });
+    expect(file.viewedFingerprint).toBeTypeOf("string");
+    await service.viewed("workspace", first.id, file.path, true);
+    await expect(service.save("workspace", first.id, file.path, "replacement")).rejects.toThrow();
+  }
+  expect((await service.snapshot("workspace", root)).files.every((file) => file.viewed)).toBe(true);
+  await writeFile(target, Buffer.alloc(MAX_FILE_BYTES + 1, 66));
+  // Acknowledge the old display, even though the file has already changed.
+  await service.viewed("workspace", first.id, "large.txt", true);
+  const changed = await service.snapshot("workspace", root);
+  expect(changed.files.find((file) => file.path === "large.txt")).toMatchObject({
+    viewed: false,
+    newContents: null,
+  });
+  expect(changed.files.find((file) => file.path === "large.txt")!.viewedFingerprint).not.toBe(
+    first.files.find((file) => file.path === "large.txt")!.viewedFingerprint,
+  );
+  expect(changed.files.find((file) => file.path === "binary")!.viewed).toBe(true);
+  await service.viewed("workspace", changed.id, "large.txt", true);
+  await service.viewed("workspace", changed.id, "large.txt", false);
+  expect(
+    (await service.snapshot("workspace", root)).files.find((file) => file.path === "large.txt")!
+      .viewed,
+  ).toBe(false);
+});
+
+it("invalidates unavailable Viewed state when the base blob changes", async () => {
+  const { root, service } = await fixture();
+  const target = path.join(root, "large.txt");
+  await writeFile(target, Buffer.alloc(MAX_FILE_BYTES + 1, 65));
+  await writeFile(path.join(root, "alternate.txt"), Buffer.alloc(MAX_FILE_BYTES + 1, 66));
+  await baseline(root);
+  await writeFile(target, "small current file\n");
+  const first = await service.snapshot("workspace", root);
+  expect(first.files[0]!.reason).toContain("Original file exceeds");
+  await service.viewed("workspace", first.id, "large.txt", true);
+  expect((await service.snapshot("workspace", root)).files[0]!.viewed).toBe(true);
+  // Change only the base tree; leave the current file and its metadata untouched.
+  const { stdout: blob } = await execute("git", ["-C", root, "rev-parse", "HEAD:alternate.txt"]);
+  await execute("git", [
+    "-C",
+    root,
+    "update-index",
+    "--cacheinfo",
+    `100644,${blob.trim()},large.txt`,
+  ]);
+  const { stdout: tree } = await execute("git", ["-C", root, "write-tree"]);
+  await execute("git", ["-C", root, "update-ref", "refs/review-test/base", tree.trim()]);
+  expect(
+    (await service.snapshot("workspace", root)).files.find((file) => file.path === "large.txt")!
+      .viewed,
+  ).toBe(false);
+});
+
+it("allows Viewed for files omitted by the snapshot content budget", async () => {
+  const { root, service } = await fixture();
+  for (let i = 0; i < 17; i++)
+    await writeFile(
+      path.join(root, `file-${String(i).padStart(2, "0")}.txt`),
+      Buffer.alloc(MAX_FILE_BYTES, 65),
+    );
+  const first = await service.snapshot("workspace", root);
+  const omitted = first.files.at(-1)!;
+  expect(omitted).toMatchObject({ fingerprint: null, oldContents: null, newContents: null });
+  expect(omitted.reason).toContain("8 MiB");
+  await service.viewed("workspace", first.id, omitted.path, true);
+  expect((await service.snapshot("workspace", root)).files.at(-1)!.viewed).toBe(true);
+});
 it("serializes saves and rejects tokens after workspace relocation", async () => {
   const { root, service } = await fixture();
   const other = await fixture();

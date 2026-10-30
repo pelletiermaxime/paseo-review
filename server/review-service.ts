@@ -3,6 +3,7 @@ import { randomUUID } from "node:crypto";
 import path from "node:path";
 import { z } from "zod";
 import type { ReviewComparison, ReviewSnapshot } from "../shared/review";
+import { reviewFingerprint } from "../shared/review";
 import { capture, hash, repositoryRoot, saveFile, validatePath } from "./repository";
 import type { CapturedFile } from "./repository";
 
@@ -59,8 +60,9 @@ export class ReviewService {
     const state = await this.state();
     for (const { file } of files)
       file.viewed =
-        file.fingerprint !== null &&
-        state[this.key(workspaceId, root, file.path, comparison, baseRef)] === file.fingerprint;
+        reviewFingerprint(file) !== null &&
+        state[this.key(workspaceId, root, file.path, comparison, baseRef)] ===
+          reviewFingerprint(file);
     // Bound retained snapshots, including the original bytes used for conflicts.
     for (const [id, session] of this.sessions)
       if (session.expires < Date.now()) this.sessions.delete(id);
@@ -95,9 +97,10 @@ export class ReviewService {
   }
   async viewed(workspaceId: string, snapshotId: string, relative: string, viewed: boolean) {
     const { session, file } = this.displayed(workspaceId, snapshotId, relative);
-    if (!file.file.fingerprint) throw new Error("Unsupported files cannot be marked Viewed.");
+    const fingerprint = reviewFingerprint(file.file);
+    if (!fingerprint)
+      throw new Error("File version cannot be identified. Refresh before marking Viewed.");
     const key = this.key(workspaceId, session.root, relative, session.comparison, session.baseRef);
-    const fingerprint = file.file.fingerprint;
     const operation = this.writes
       .catch(() => {})
       .then(async () => {

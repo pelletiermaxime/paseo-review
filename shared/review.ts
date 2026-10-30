@@ -10,6 +10,7 @@ const file = z.object({
   oldContents: z.string().nullable(),
   newContents: z.string().nullable(),
   fingerprint: z.string().nullable(),
+  viewedFingerprint: z.string().nullable().optional(),
   viewed: z.boolean(),
   editable: z.boolean(),
   reason: z.string().nullable(),
@@ -49,3 +50,7 @@ export const saveRpc = defineRpc({
 });
 export type ReviewFile = z.infer<typeof file>;
 export type ReviewSnapshot = z.infer<typeof snapshotRpc.output>;
+
+export function reviewFingerprint(file: ReviewFile): string | null {
+  return file.fingerprint ?? file.viewedFingerprint ?? null;
+}

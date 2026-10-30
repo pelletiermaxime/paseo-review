@@ -32,6 +32,28 @@ const snapshot: ReviewSnapshot = {
   warning: null,
 };
 
+it("retains unavailable-file Viewed versions and drops them when their metadata changes", () => {
+  const unavailable = {
+    ...file,
+    fingerprint: null,
+    viewedFingerprint: "metadata-v1",
+    viewed: true,
+    editable: false,
+    oldContents: null,
+    newContents: null,
+  };
+  const previous = { ...snapshot, files: [unavailable] };
+  expect(viewedFileVersions(previous)).toEqual({ "example.ts": "metadata-v1" });
+  const collapsed = new Set([file.path]);
+  reopenChangedViewedFiles(collapsed, viewedFileVersions(previous), previous);
+  expect(collapsed.has(file.path)).toBe(true);
+  reopenChangedViewedFiles(collapsed, viewedFileVersions(previous), {
+    ...previous,
+    files: [{ ...unavailable, viewed: false, viewedFingerprint: "metadata-v2" }],
+  });
+  expect(collapsed.has(file.path)).toBe(false);
+});
+
 it("restores independent tabs from JSON with view preferences, file edits and unfinished comments", () => {
   const diff = parseDiffFromFile(
     { name: file.path, contents: file.oldContents },

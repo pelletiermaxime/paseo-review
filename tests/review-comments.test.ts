@@ -181,6 +181,26 @@ it("retains drafts on send failure and blocks unfinished or changed-file comment
   expect(send).not.toHaveBeenCalled();
 });
 
+it("sends only the selected comment while preserving other pending and unfinished comments", async () => {
+  const current = draft("current");
+  const pending = draft("pending");
+  const unfinished = { ...draft("unfinished"), editing: true, input: "Still writing" };
+  const stale = { ...draft("stale"), fingerprint: "older-version" };
+  const state: CommentState = { drafts: [pending, unfinished, stale, current], sending: false };
+  const send = vi.fn().mockRejectedValueOnce(new Error("offline")).mockResolvedValue(undefined);
+
+  await expect(deliverComments(state, snapshot, send, [current])).rejects.toThrow("offline");
+  expect(state.drafts).toEqual([pending, unfinished, stale, current]);
+  expect(state.sending).toBe(false);
+
+  expect(await deliverComments(state, snapshot, send, [current])).toBe(1);
+  expect(send.mock.calls[1]![0].comments).toEqual([current.comment]);
+  expect(state.drafts).toEqual([pending, unfinished, stale]);
+  await expect(deliverComments(state, snapshot, send, [stale])).rejects.toThrow("changed");
+  await expect(deliverComments(state, snapshot, send, [unfinished])).rejects.toThrow("Finish");
+  expect(send).toHaveBeenCalledTimes(2);
+});
+
 it("lists every page and offers only live agents in the current workspace", async () => {
   const agent = (
     id: string,

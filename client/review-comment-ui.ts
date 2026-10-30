@@ -134,14 +134,25 @@ export function createCommentUI(options: CommentUIOptions) {
     }
   }
 
-  async function submit() {
+  async function submit(drafts: readonly CommentDraft[] = state.drafts) {
     const snapshot = options.snapshot();
-    if (!snapshot || !recipient.value || state.sending) return;
+    if (state.sending) return;
+    if (options.editing()) {
+      options.message("Save or Cancel file edits before sending feedback.");
+      return;
+    }
+    if (!snapshot || !recipient.value) {
+      options.message("Choose an available agent in Review feedback before sending.");
+      return;
+    }
     const agentId = recipient.value;
-    const paths = state.drafts.map((draft) => draft.path);
+    const paths = drafts.map((draft) => draft.path);
     try {
-      const pending = deliverComments(state, snapshot, (attachment) =>
-        options.send(agentId, attachment),
+      const pending = deliverComments(
+        state,
+        snapshot,
+        (attachment) => options.send(agentId, attachment),
+        drafts,
       );
       refresh();
       for (const path of paths) options.update(path);
@@ -196,13 +207,13 @@ export function createCommentUI(options: CommentUIOptions) {
         refresh();
         options.update(draft.path);
       });
-      add.title = "Add comment (Ctrl+Enter / Cmd+Enter)";
-      input.setAttribute("aria-keyshortcuts", "Control+Enter Meta+Enter");
+      add.title = "Add comment (Enter)";
+      input.setAttribute("aria-keyshortcuts", "Enter Control+Enter Meta+Enter Shift+Enter");
       add.disabled = state.sending || !input.value.trim();
       input.addEventListener("keydown", (event) => {
         if (
           event.key !== "Enter" ||
-          (!event.ctrlKey && !event.metaKey) ||
+          event.defaultPrevented ||
           event.altKey ||
           event.shiftKey ||
           event.isComposing
@@ -210,7 +221,9 @@ export function createCommentUI(options: CommentUIOptions) {
           return;
         event.preventDefault();
         event.stopPropagation();
-        if (!event.repeat && !add.disabled) add.click();
+        if (event.repeat || add.disabled) return;
+        add.click();
+        if (event.ctrlKey || event.metaKey) void submit([draft]);
       });
       input.addEventListener("input", () => {
         draft.input = input.value;
@@ -229,7 +242,8 @@ export function createCommentUI(options: CommentUIOptions) {
       });
       cancel.disabled = state.sending;
       const hint = document.createElement("div");
-      hint.textContent = "Ctrl+Enter / Cmd+Enter to add comment";
+      hint.textContent =
+        "Enter to add comment · Ctrl+Enter / Cmd+Enter to send to chat · Shift+Enter for a new line";
       hint.style.cssText = "font-size:11px;margin-top:6px";
       card.append(input, add, cancel, hint);
       if (focusId === id) {

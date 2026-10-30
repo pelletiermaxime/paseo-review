@@ -147,16 +147,17 @@ export async function deliverComments(
   state: CommentState,
   snapshot: ReviewSnapshot,
   send: (attachment: ReviewAttachment) => Promise<void>,
+  drafts: readonly CommentDraft[] = state.drafts,
 ): Promise<number> {
   if (state.sending) throw new Error("Feedback is already being sent.");
-  if (!state.drafts.length) throw new Error("Add a line comment first.");
-  if (state.drafts.some((draft) => draft.editing || !draft.comment.body.trim()))
+  if (!drafts.length) throw new Error("Add a line comment first.");
+  if (drafts.some((draft) => draft.editing || !draft.comment.body.trim()))
     throw new Error("Finish or cancel your comment drafts before sending.");
-  if (state.drafts.some((draft) => !commentIsCurrent(draft, snapshot)))
+  if (drafts.some((draft) => !commentIsCurrent(draft, snapshot)))
     throw new Error(
       "Some commented files changed. Review and recreate those comments before sending.",
     );
-  const batch = [...state.drafts];
+  const batch = [...drafts];
   state.sending = true;
   try {
     await send({

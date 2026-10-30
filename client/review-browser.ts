@@ -11,6 +11,7 @@ import {
 } from "./review-state";
 import type { CommentState } from "./review-comments";
 import type { ReviewComparison, ReviewFile, ReviewSnapshot } from "../shared/review";
+import { reviewFingerprint } from "../shared/review";
 import { lineComment, type FeedbackAgent, type ReviewAttachment } from "./review-comments";
 import { createCommentUI, type CommentAnnotation } from "./review-comment-ui";
 import { diffNavigationLines, reviewShortcut, reviewShortcuts } from "./review-shortcuts";
@@ -55,6 +56,8 @@ export async function mountReview(host: HTMLElement, bridge: Bridge): Promise<()
   const collapsed = new Set(restored.collapsed);
   const opening = new Set<string>();
   const items = new Map<string, CodeViewItem<CommentAnnotation>>();
+  const unavailableCards = new Map<string, HTMLElement>();
+  const unavailable = document.createElement("div");
   let visiblePaths: string[] = [];
   let activePath = restored.activePath ?? undefined;
   const root = document.createElement("section");
@@ -135,6 +138,8 @@ export async function mountReview(host: HTMLElement, bridge: Bridge): Promise<()
     collapsed.clear();
     activePath = undefined;
     items.clear();
+    unavailableCards.clear();
+    unavailable.replaceChildren();
     viewer.clearSelectedLines();
     viewer.setItems([]);
     tree.replaceChildren();
@@ -243,7 +248,7 @@ export async function mountReview(host: HTMLElement, bridge: Bridge): Promise<()
       collapsed.delete(path);
       render();
       updateFile(path);
-      viewer.scrollTo({ type: "item", id: path, align: "start", behavior: "instant" });
+      jumpToFile(path);
     },
     message,
   });
@@ -251,6 +256,11 @@ export async function mountReview(host: HTMLElement, bridge: Bridge): Promise<()
   root.append(status, body);
 
   function toggleFile(path: string) {
+    const file = snapshot?.files.find((file) => file.path === path);
+    if (!file?.fingerprint) {
+      if (file) message(`${file.path}: Diff unavailable. ${file.reason ?? ""}`);
+      return;
+    }
     activePath = path;
     const top = viewer.getTopForItem(path);
     const scrollTop = viewer.getScrollTop();
@@ -301,6 +311,16 @@ export async function mountReview(host: HTMLElement, bridge: Bridge): Promise<()
   viewport.addEventListener("touchmove", followScroll, { passive: true });
 
   function currentPath() {
+    const container = viewport.getBoundingClientRect();
+    const visibleCard = (card: HTMLElement) => {
+      const bounds = card.getBoundingClientRect();
+      return bounds.bottom > container.top && bounds.top < container.bottom;
+    };
+    const activeCard = activePath ? unavailableCards.get(activePath) : undefined;
+    if (activeCard && visibleCard(activeCard)) return activePath;
+    for (const [path, card] of unavailableCards) {
+      if (visibleCard(card)) return path;
+    }
     const top = viewer.getScrollTop();
     const bottom = top + viewer.getHeight();
     const index = visiblePaths.findIndex((path, index) => {
@@ -422,13 +442,13 @@ export async function mountReview(host: HTMLElement, bridge: Bridge): Promise<()
       );
       activePath = visiblePaths[index];
       viewer.clearSelectedLines();
-      viewer.scrollTo({ type: "item", id: activePath!, align: "start", behavior: "instant" });
+      jumpToFile(activePath!);
       root.focus({ preventScroll: true });
       persist();
     } else if (key === "z") toggleFile(path);
     else if (key === "r") {
       const file = snapshot?.files.find((file) => file.path === path);
-      if (file?.fingerprint) void mark(file, !file.viewed);
+      if (file && reviewFingerprint(file)) void mark(file, !file.viewed);
     } else if (key === "j" || key === "k") moveLine(path, key === "j" ? 1 : -1);
     else if (key === "c") {
       const selection = viewer.getSelectedLines();
@@ -487,6 +507,11 @@ export async function mountReview(host: HTMLElement, bridge: Bridge): Promise<()
       item.edit = draft?.path === relative;
       if (item.type === "diff") item.annotations = item.edit ? [] : comments.annotations(relative);
       viewer.updateItem({ ...item });
+    }
+    for (const [path, card] of unavailableCards) {
+      const checkbox = card.querySelector<HTMLInputElement>('input[type="checkbox"]');
+      const file = snapshot?.files.find((file) => file.path === path);
+      if (checkbox) checkbox.disabled = busy || !file || !reviewFingerprint(file);
     }
     refresh.disabled = busy || draft !== undefined;
     updateScopeControls();
@@ -587,7 +612,7 @@ export async function mountReview(host: HTMLElement, bridge: Bridge): Promise<()
     const checkbox = document.createElement("input");
     checkbox.type = "checkbox";
     checkbox.checked = file.viewed;
-    checkbox.disabled = busy || !file.fingerprint;
+    checkbox.disabled = busy || !reviewFingerprint(file);
     checkbox.setAttribute("aria-label", `Viewed ${file.path}`);
     checkbox.addEventListener("click", (event) => event.stopPropagation());
     checkbox.addEventListener("change", () => {
@@ -629,12 +654,14 @@ export async function mountReview(host: HTMLElement, bridge: Bridge): Promise<()
       open.disabled = opening.has(file.path);
       controls.append(open);
     }
-    controls.append(
-      button(collapsed.has(file.path) ? "Expand" : "Collapse", () => toggleFile(file.path)),
-    );
+    if (file.fingerprint)
+      controls.append(
+        button(collapsed.has(file.path) ? "Expand" : "Collapse", () => toggleFile(file.path)),
+      );
     return controls;
   }
   const options: CodeViewOptions<CommentAnnotation, undefined> = {
+    renderCodeViewHeader: () => unavailable,
     stickyHeaders: true,
     unsafeCSS:
       "[data-diffs-header] { cursor: pointer; } [data-metadata] > [data-additions-count] { order: -1; } [data-change-type=rename-pure] [data-additions-count], [data-change-type=rename-pure] [data-deletions-count] { display: none; }",
@@ -755,12 +782,18 @@ export async function mountReview(host: HTMLElement, bridge: Bridge): Promise<()
     );
   }
 
+  function jumpToFile(path: string) {
+    const card = unavailableCards.get(path);
+    if (card) card.scrollIntoView({ block: "start" });
+    else viewer.scrollTo({ type: "item", id: path, align: "start", behavior: "instant" });
+  }
+
   function render() {
     updateScopeControls();
     if (disposed || !snapshot) return;
     comments.refresh();
-    const reviewable = snapshot.files.filter((file) => file.fingerprint !== null).length;
-    progress.textContent = `${snapshot.files.filter((file) => file.viewed).length} / ${reviewable} Viewed${reviewable !== snapshot.files.length ? ` · ${snapshot.files.length - reviewable} unsupported` : ""}`;
+    const unavailableCount = snapshot.files.filter((file) => file.fingerprint === null).length;
+    progress.textContent = `${snapshot.files.filter((file) => file.viewed).length} / ${snapshot.files.length} Viewed${unavailableCount ? ` · ${unavailableCount} diffs unavailable` : ""}`;
     refresh.disabled = busy || draft !== undefined;
     const visible = snapshot.files.filter(
       (file) =>
@@ -770,7 +803,29 @@ export async function mountReview(host: HTMLElement, bridge: Bridge): Promise<()
             path.toLowerCase().includes(search.value.toLowerCase()),
           )),
     );
-    visiblePaths = visible.map((file) => file.path);
+    // Unavailable files use ordinary cards and never enter Pierre's file renderer.
+    visiblePaths = [
+      ...visible.filter((file) => !file.fingerprint),
+      ...visible.filter((file) => file.fingerprint),
+    ].map((file) => file.path);
+    unavailableCards.clear();
+    unavailable.replaceChildren();
+    for (const file of visible.filter((file) => !file.fingerprint)) {
+      const card = document.createElement("section");
+      card.setAttribute("aria-label", `Diff unavailable: ${file.path}`);
+      card.style.cssText = `padding:12px;border-bottom:1px solid ${bridge.colors.border}`;
+      const title = document.createElement("strong");
+      title.textContent = file.path;
+      title.style.cssText = "display:block;overflow-wrap:anywhere;margin-bottom:8px";
+      const reason = document.createElement("p");
+      reason.textContent = `Diff unavailable. ${file.reason ?? "Unsupported file."}`;
+      reason.style.cssText = "margin:8px 0 0;overflow-wrap:anywhere";
+      const controls = header(file);
+      controls.style.flexWrap = "wrap";
+      card.append(title, controls, reason);
+      unavailableCards.set(file.path, card);
+      unavailable.append(card);
+    }
     tree.replaceChildren();
     const folders = new Map<string, HTMLElement>([["", tree]]);
     const folderCounts = new Map<
@@ -822,31 +877,28 @@ export async function mountReview(host: HTMLElement, bridge: Bridge): Promise<()
         }
         parent = folder;
       }
-      if (!items.has(file.path)) {
+      if (file.fingerprint && !items.has(file.path)) {
         const contents = draft?.path === file.path ? draft.contents : file.newContents;
         // A pure rename has no diff body to attach an editor to. Edit its full new file.
         const pureRenameDraft =
           draft?.path === file.path && file.oldPath && file.oldContents === file.newContents;
-        const item: CodeViewItem<CommentAnnotation> =
-          file.fingerprint && !pureRenameDraft
-            ? {
-                id: file.path,
-                type: "diff",
-                fileDiff: parseDiffFromFile(
-                  file.oldContents === null
-                    ? null
-                    : { name: file.oldPath ?? file.path, contents: file.oldContents },
-                  contents === null ? null : { name: file.path, contents },
-                ),
-                annotations: comments.annotations(file.path),
-              }
-            : {
-                id: file.path,
-                type: "file",
-                file: file.fingerprint
-                  ? { name: file.path, contents: contents ?? "" }
-                  : { name: file.path, contents: file.reason ?? "Unsupported file", lang: "text" },
-              };
+        const item: CodeViewItem<CommentAnnotation> = !pureRenameDraft
+          ? {
+              id: file.path,
+              type: "diff",
+              fileDiff: parseDiffFromFile(
+                file.oldContents === null
+                  ? null
+                  : { name: file.oldPath ?? file.path, contents: file.oldContents },
+                contents === null ? null : { name: file.path, contents },
+              ),
+              annotations: comments.annotations(file.path),
+            }
+          : {
+              id: file.path,
+              type: "file",
+              file: { name: file.path, contents: contents ?? "" },
+            };
         if (item.type === "diff") {
           // Stable while this displayed content is unchanged, including virtualization.
           // Restored edit text differs from the snapshot and must have a separate key.
@@ -861,7 +913,7 @@ export async function mountReview(host: HTMLElement, bridge: Bridge): Promise<()
       const jump = button("", () => {
         activePath = file.path;
         viewer.clearSelectedLines();
-        viewer.scrollTo({ type: "item", id: file.path, align: "start", behavior: "instant" });
+        jumpToFile(file.path);
         root.focus({ preventScroll: true });
         persist();
         if (file.reason) message(`${file.path}: ${file.reason}`);
@@ -881,8 +933,8 @@ export async function mountReview(host: HTMLElement, bridge: Bridge): Promise<()
         renamed.style.cssText = `flex-shrink:0;font-size:11px;color:${bridge.colors.statusSuccess}`;
         jump.append(renamed);
       }
-      const item = items.get(file.path)!;
-      if (item.type === "diff") {
+      const item = items.get(file.path);
+      if (item?.type === "diff") {
         let additions = 0;
         let deletions = 0;
         for (const hunk of item.fileDiff.hunks) {
@@ -912,12 +964,14 @@ export async function mountReview(host: HTMLElement, bridge: Bridge): Promise<()
       );
     }
     viewer.setItems(
-      visible.map((file) => {
-        const item = items.get(file.path)!;
-        item.version = ++version;
-        item.collapsed = collapsed.has(file.path);
-        return { ...item };
-      }),
+      visible
+        .filter((file) => file.fingerprint)
+        .map((file) => {
+          const item = items.get(file.path)!;
+          item.version = ++version;
+          item.collapsed = collapsed.has(file.path);
+          return { ...item };
+        }),
     );
     persist();
   }

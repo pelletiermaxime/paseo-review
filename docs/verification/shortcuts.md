@@ -26,7 +26,9 @@ Preconditions: [common fixture](../verification.md), at least two visible files 
 | `z`                              | Toggle collapse with the same visible/pinned-header rule as the button         |
 | `/` then Escape                  | Focus search, then return focus to the panel                                   |
 | `h` / **Shortcuts**, then Escape | Open help through each entry point, then close it                              |
-| Ctrl/Cmd+Enter in a comment      | Add/apply locally; plain Enter is a newline                                    |
+| Enter in a comment               | Add/apply locally                                                              |
+| Ctrl/Cmd+Enter in a comment      | Send only the current comment to the selected agent                            |
+| Shift+Enter in a comment         | Insert a newline                                                               |
 
 Run the matrix in unified and split layouts. Scroll manually, then press `j`: navigation restarts near the viewport instead of the old cursor.
 

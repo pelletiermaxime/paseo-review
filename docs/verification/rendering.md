@@ -19,6 +19,7 @@ Preconditions: [common fixture](../verification.md), including `scratch/many.ts`
 
 - **Themes.** Inspect TypeScript syntax colors in both dark/light. Require readable backgrounds, text and tokens. Restore the original setting.
 - **Highlighting.** Expose a new code file, wait for colors, scroll it out of the rendered set/back, then collapse a preceding large file. Require correct colors and responsive controls; old benchmark timings are not a pass threshold.
+- **Unavailable content.** Oversized/binary entries show ordinary cards and never become file/diff renderer items. Refresh, filter, mark Viewed and scroll repeatedly; require no `VirtualizedFile.render` layout error, no invented line counts and no way to expand their content. Repeat with only unavailable files visible.
 - **Main thread.** Require no panel-owned worker. With several large files open, collapse a file near the top and observe how promptly following files reposition and retain syntax colors.
 - **Assets.** Run `vp run test` for highlighting checks. Observe host rendering requests and flag unexpected grammar/theme/WASM downloads.
 - **Native.** On an actual iOS/Android client, require the desktop/web fallback and no browser-renderer initialization. If only a DOM-free simulation is available, report it as such; static checks do not prove physical-device behavior.

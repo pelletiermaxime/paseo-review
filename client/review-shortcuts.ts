@@ -9,7 +9,9 @@ export const reviewShortcuts = [
   ["/", "Focus the file filter"],
   ["h", "Show / hide this help"],
   ["Escape", "Leave the filter or close this help"],
-  ["Ctrl+Enter / Cmd+Enter", "Add a comment locally from its text box"],
+  ["Enter", "Add a comment locally from its text box"],
+  ["Ctrl+Enter / Cmd+Enter", "Send the current comment to the selected agent's chat"],
+  ["Shift+Enter", "Insert a new line in a comment"],
 ] as const;
 
 export function reviewShortcut(event: KeyboardEvent, typing: boolean): string | undefined {
