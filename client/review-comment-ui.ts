@@ -1,5 +1,6 @@
 import type { DiffLineAnnotation } from "@pierre/diffs";
 import type { ReviewSnapshot } from "../shared/review";
+import { setButtonIcon } from "./review-controls";
 import {
   commentIsCurrent,
   deliverComments,
@@ -38,24 +39,37 @@ export function createCommentUI(options: CommentUIOptions) {
   const { button } = options;
   const section = document.createElement("section");
   section.setAttribute("aria-label", "Review feedback");
-  section.style.cssText = `padding:8px 10px;border-bottom:1px solid ${options.colors.border};font:12px system-ui`;
+  section.style.cssText =
+    "display:flex;align-items:center;gap:6px;min-width:0;flex:0 0 auto;font:12px system-ui";
   const actions = document.createElement("div");
-  actions.style.cssText = "display:flex;flex-wrap:wrap;align-items:center;gap:8px";
+  actions.style.cssText = "display:flex;align-items:center;gap:6px;min-width:0";
   const recipient = document.createElement("select");
   recipient.setAttribute("aria-label", "Send feedback to agent");
-  recipient.style.cssText = `font:inherit;max-width:300px;color:${options.colors.foreground};background:${options.colors.surface1};padding:5px;border:1px solid ${options.colors.border};border-radius:5px`;
+  recipient.style.cssText = `font:inherit;width:clamp(120px,18vw,240px);min-width:0;height:30px;box-sizing:border-box;color:${options.colors.foreground};background:${options.colors.surface1};padding:5px;border:1px solid ${options.colors.border};border-radius:5px`;
   recipient.addEventListener("change", refresh);
   const reload = button("Refresh agents", () => void loadAgents());
+  setButtonIcon(reload, "refresh", "Refresh agents");
   const send = button("Send feedback", () => void submit());
-  send.title = "Send these comments as a code review. Running agents receive steering feedback.";
-  const hint = document.createElement("span");
-  actions.append(recipient, reload, send, hint);
-  const details = document.createElement("details");
-  details.style.cssText = "max-height:180px;overflow:auto;margin-top:6px";
-  const summary = document.createElement("summary");
-  summary.style.cursor = "pointer";
+  const details = document.createElement("section");
+  details.popover = "auto";
+  details.id = `review-comments-${crypto.randomUUID()}`;
+  details.setAttribute("aria-label", "Local review comments");
+  details.style.cssText = `width:min(560px,calc(100vw - 32px));max-height:60vh;overflow:auto;box-sizing:border-box;padding:12px;color:${options.colors.foreground};background:${options.colors.surface1};border:1px solid ${options.colors.border};border-radius:8px;font:13px system-ui`;
+  const showComments = button("Local comments", () => details.togglePopover());
+  showComments.setAttribute("aria-controls", details.id);
+  showComments.setAttribute("aria-expanded", "false");
+  details.addEventListener("toggle", () => {
+    showComments.setAttribute("aria-expanded", String(details.matches(":popover-open")));
+  });
+  const heading = document.createElement("div");
+  heading.style.cssText = "display:flex;align-items:center;justify-content:space-between;gap:8px";
+  const summary = document.createElement("strong");
+  const close = button("Close local comments", () => details.hidePopover());
+  setButtonIcon(close, "close", "Close local comments");
+  heading.append(summary, close);
+  actions.append(recipient, reload, send, showComments);
   const list = document.createElement("div");
-  details.append(summary, list);
+  details.append(heading, list);
   section.append(actions, details);
   options.container.append(section);
 
@@ -67,7 +81,12 @@ export function createCommentUI(options: CommentUIOptions) {
       options.onChange();
     }
     const snapshot = options.snapshot();
-    send.textContent = state.sending ? "Sending…" : `Send feedback (${state.drafts.length})`;
+    setButtonIcon(
+      send,
+      "send",
+      state.sending ? "Sending feedback…" : `Send feedback (${state.drafts.length})`,
+      state.drafts.length || undefined,
+    );
     send.disabled =
       state.sending ||
       options.editing() ||
@@ -77,22 +96,30 @@ export function createCommentUI(options: CommentUIOptions) {
       state.drafts.some((draft) => draft.editing || !commentIsCurrent(draft, snapshot));
     reload.disabled = loading || state.sending;
     recipient.disabled = loading || state.sending;
-    hint.textContent = options.editing()
+    const hint = options.editing()
       ? "Save or Cancel file edits before sending feedback."
       : snapshot && state.drafts.some((draft) => !commentIsCurrent(draft, snapshot))
         ? "Commented files changed. Open local comments to review and recreate them."
         : state.drafts.some((draft) => draft.editing)
           ? "Finish or Cancel your inline comment drafts before sending."
-          : "Use + beside a line to comment. Running agents receive steering feedback.";
+          : "Send these comments as a code review. Running agents receive steering feedback.";
+    send.title = hint;
     summary.textContent = `${state.drafts.length} local comment${state.drafts.length === 1 ? "" : "s"}`;
-    details.hidden = !state.drafts.length;
+    setButtonIcon(showComments, "comments", summary.textContent, state.drafts.length);
+    showComments.hidden = !state.drafts.length;
+    // Icon buttons have an explicit display style, so use display:none for the empty state.
+    showComments.style.display = state.drafts.length ? "inline-flex" : "none";
+    if (!state.drafts.length) details.hidePopover();
     list.replaceChildren();
     for (const draft of state.drafts) {
       const row = document.createElement("div");
-      row.style.cssText = "display:flex;align-items:center;gap:8px;padding-top:5px";
+      row.style.cssText = "display:flex;flex-wrap:wrap;align-items:center;gap:8px;padding-top:8px";
       const { filePath, side, lineNumber, body } = draft.comment;
       const stale = !snapshot || !commentIsCurrent(draft, snapshot);
-      const jump = button(`${filePath}:${lineNumber} (${side})`, () => options.jump(draft.path));
+      const jump = button(`${filePath}:${lineNumber} (${side})`, () => {
+        details.hidePopover();
+        options.jump(draft.path);
+      });
       const text = document.createElement("span");
       text.style.cssText = "flex:1;white-space:pre-wrap;overflow-wrap:anywhere";
       text.textContent = `${stale ? "File changed — review and recreate this comment. " : ""}${draft.editing ? "Unfinished draft: " : ""}${draft.input ?? body}`;

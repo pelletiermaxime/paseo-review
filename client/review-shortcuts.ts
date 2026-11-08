@@ -5,6 +5,7 @@ export const reviewShortcuts = [
   ["r", "Toggle Viewed on the current file"],
   ["z", "Collapse / expand the current file"],
   ["j / k", "Next / previous diff line"],
+  ["] / [", "Next / previous change across filtered files"],
   ["c", "Comment on the selected line"],
   ["/", "Focus the file filter"],
   ["h", "Show / hide this help"],
@@ -25,8 +26,8 @@ export function reviewShortcut(event: KeyboardEvent, typing: boolean): string | 
   )
     return;
   if (event.shiftKey) return;
-  if (!["n", "p", "r", "z", "j", "k", "c", "/", "h"].includes(event.key)) return;
-  if (event.repeat && !["n", "p", "j", "k"].includes(event.key)) return;
+  if (!["n", "p", "r", "z", "j", "k", "c", "/", "h", "[", "]"].includes(event.key)) return;
+  if (event.repeat && !["n", "p", "j", "k", "[", "]"].includes(event.key)) return;
   return event.key;
 }
 

@@ -172,7 +172,7 @@ export async function capture(
   root: string,
   comparison: ReviewComparison = "head-worktree",
   requestedBase?: string,
-): Promise<{ files: CapturedFile[]; warning: string; baseRef: string | null }> {
+): Promise<{ files: CapturedFile[]; warning: string | null; baseRef: string | null }> {
   let head: string | null;
   try {
     head = (await git(root, ["rev-parse", "--verify", "HEAD"])).trim();
@@ -292,11 +292,7 @@ export async function capture(
     }
     files.push({ file, disk: file.editable ? disk : null });
   }
-  let warning =
-    (baseRef
-      ? `Merge base with ${baseRef} → worktree includes committed branch changes plus staged, unstaged and untracked files. Uses local refs; fetch separately to update the base.`
-      : "HEAD → worktree includes staged, unstaged and untracked files.") +
-    " Renames use Git's 50% similarity threshold. Refreshes when you return to this tab; paused while editing.";
+  let warning: string | null = null;
   const renamedSources = new Set<string>();
   try {
     const matches = await detectRenames(files.map(({ file }) => file));
@@ -316,7 +312,7 @@ export async function capture(
       renamedSources.add(source);
     }
   } catch {
-    warning += " Rename detection failed; unmatched files are shown separately.";
+    warning = "Rename detection failed; unmatched files are shown separately.";
   }
   return { files: files.filter(({ file }) => !renamedSources.has(file.path)), warning, baseRef };
 }

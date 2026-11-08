@@ -23,8 +23,13 @@ it("leaves typing, host chords, composition and browser behavior alone", () => {
   expect(reviewShortcut(key("Enter"), false)).toBeUndefined();
   for (const action of ["r", "z", "c", "h", "/"])
     expect(reviewShortcut(key(action, { repeat: true }), false)).toBeUndefined();
-  for (const action of ["j", "k", "n", "p"])
+  for (const action of ["j", "k", "n", "p", "[", "]"])
     expect(reviewShortcut(key(action, { repeat: true }), false)).toBe(action);
+  for (const action of ["[", "]"]) {
+    expect(reviewShortcut(key(action), true)).toBeUndefined();
+    expect(reviewShortcut(key(action, { altKey: true }), false)).toBeUndefined();
+    expect(reviewShortcut(key(action, { isComposing: true }), false)).toBeUndefined();
+  }
 });
 
 it("navigates replacements in old/new order with valid comment anchors", () => {

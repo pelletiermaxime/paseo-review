@@ -16,6 +16,8 @@ import { lineComment, type FeedbackAgent, type ReviewAttachment } from "./review
 import { createCommentUI, type CommentAnnotation } from "./review-comment-ui";
 import { diffNavigationLines, reviewShortcut, reviewShortcuts } from "./review-shortcuts";
 import { observeReviewActivation } from "./review-activation";
+import { diffChangeLines, nextReviewChange } from "./review-navigation";
+import { setButtonIcon } from "./review-controls";
 
 type Colors = PluginWorkspacePanelProps["theme"]["colors"];
 interface Bridge {
@@ -67,25 +69,39 @@ export async function mountReview(host: HTMLElement, bridge: Bridge): Promise<()
   root.style.cssText = `display:flex;flex-direction:column;height:100%;min-height:240px;min-width:0;font:13px system-ui;color:${bridge.colors.foreground};background:${bridge.colors.surface0}`;
   const toolbar = document.createElement("div");
   toolbar.style.cssText =
-    "display:flex;flex-wrap:wrap;align-items:center;gap:10px;padding:10px;border-bottom:1px solid " +
+    "display:flex;flex-direction:column;gap:6px;padding:8px;min-width:0;border-bottom:1px solid " +
     bridge.colors.border;
+  const primaryRow = document.createElement("div");
+  const secondaryRow = document.createElement("div");
+  for (const row of [primaryRow, secondaryRow])
+    row.style.cssText =
+      "display:flex;align-items:center;gap:6px;min-width:0;min-height:30px;overflow-x:auto";
+  toolbar.append(primaryRow, secondaryRow);
   const progress = document.createElement("strong");
+  progress.style.cssText = "white-space:nowrap;flex-shrink:0;font-variant-numeric:tabular-nums";
   const status = document.createElement("output");
+  status.hidden = true;
   status.setAttribute("aria-live", "polite");
   status.style.cssText =
-    "display:block;padding:7px 10px;min-height:18px;font-size:12px;white-space:pre-wrap";
+    "min-width:100px;flex:1 0 100px;font-size:12px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap";
   const body = document.createElement("div");
   body.style.cssText = "display:flex;flex:1;min-height:0;min-width:0;overflow:hidden";
   const tree = document.createElement("nav");
+  tree.id = `review-file-tree-${crypto.randomUUID()}`;
+  tree.hidden = !restored.fileTreeVisible;
   tree.setAttribute("aria-label", "Changed files");
   tree.style.cssText = `width:240px;min-width:150px;max-width:40%;overflow:auto;padding:8px;border-right:1px solid ${bridge.colors.border}`;
   const viewport = document.createElement("div");
   viewport.style.cssText = "flex:1;min-width:0;min-height:0;position:relative;overflow:auto";
   body.append(tree, viewport);
-  root.append(toolbar, status, body);
+  root.append(toolbar, body);
   host.append(root);
   const message = (text: string) => {
-    if (!disposed) status.textContent = text;
+    if (!disposed) {
+      status.textContent = text;
+      status.title = text;
+      status.hidden = !text;
+    }
   };
   const button = (label: string, action: () => void) => {
     const element = document.createElement("button");
@@ -101,9 +117,10 @@ export async function mountReview(host: HTMLElement, bridge: Bridge): Promise<()
   const refresh = button("Refresh", () => {
     void load();
   });
+  setButtonIcon(refresh, "refresh", "Refresh");
   const scope = document.createElement("select");
   scope.setAttribute("aria-label", "Review scope");
-  scope.style.cssText = `font:inherit;color:${bridge.colors.foreground};background:${bridge.colors.surface1};border:1px solid ${bridge.colors.border};border-radius:5px;padding:5px 8px`;
+  scope.style.cssText = `font:inherit;color:${bridge.colors.foreground};background:${bridge.colors.surface1};border:1px solid ${bridge.colors.border};border-radius:5px;padding:5px 8px;min-width:140px;max-width:220px;height:30px;box-sizing:border-box`;
   for (const [value, label] of [
     ["head-worktree", "Uncommitted changes"],
     ["branch-worktree", "Whole branch"],
@@ -122,9 +139,17 @@ export async function mountReview(host: HTMLElement, bridge: Bridge): Promise<()
   base.setAttribute("aria-label", "Base branch");
   base.title =
     "Compare from the common ancestor with this branch. Leave empty to detect the default branch.";
-  base.style.cssText = scope.style.cssText + ";width:170px";
+  base.style.cssText = scope.style.cssText + ";width:150px;flex-shrink:0";
   function updateScopeControls() {
     scope.disabled = base.disabled = busy || draft !== undefined;
+    const canNavigate =
+      !busy &&
+      draft === undefined &&
+      visiblePaths.some((path) => {
+        const item = items.get(path);
+        return item?.type === "diff" && diffChangeLines(item.fileDiff).length > 0;
+      });
+    previousChange.disabled = nextChange.disabled = !canNavigate;
     base.hidden = comparison !== "branch-worktree";
     base.placeholder = snapshot?.baseRef ?? "Base branch (auto)";
     scope.title = draft ? "Save or Cancel the active edit before switching review scope." : "";
@@ -159,18 +184,45 @@ export async function mountReview(host: HTMLElement, bridge: Bridge): Promise<()
   });
   const layout = button(diffStyle === "unified" ? "Split" : "Unified", () => {
     diffStyle = diffStyle === "unified" ? "split" : "unified";
-    layout.textContent = diffStyle === "unified" ? "Split" : "Unified";
+    setButtonIcon(
+      layout,
+      diffStyle === "unified" ? "split" : "unified",
+      diffStyle === "unified" ? "Split" : "Unified",
+    );
     viewer.setOptions({ ...options, diffStyle, overflow });
     persist();
   });
+  setButtonIcon(
+    layout,
+    diffStyle === "unified" ? "split" : "unified",
+    diffStyle === "unified" ? "Split" : "Unified",
+  );
+  const toggleTree = button(tree.hidden ? "Show file tree" : "Hide file tree", () => {
+    tree.hidden = !tree.hidden;
+    setButtonIcon(toggleTree, "tree", tree.hidden ? "Show file tree" : "Hide file tree");
+    toggleTree.setAttribute("aria-expanded", String(!tree.hidden));
+    persist();
+  });
+  setButtonIcon(toggleTree, "tree", tree.hidden ? "Show file tree" : "Hide file tree");
+  toggleTree.setAttribute("aria-controls", tree.id);
+  toggleTree.setAttribute("aria-expanded", String(!tree.hidden));
   const collapseAll = button("Collapse all", () => setAllCollapsed(true));
   const expandAll = button("Expand all", () => setAllCollapsed(false));
+  setButtonIcon(collapseAll, "collapse", "Collapse all");
+  setButtonIcon(expandAll, "expand", "Expand all");
+  const previousChange = button("Previous change", () => moveChange(-1));
+  setButtonIcon(previousChange, "previous", "Previous change ([)");
+  const nextChange = button("Next change", () => moveChange(1));
+  setButtonIcon(nextChange, "next", "Next change (])");
+  previousChange.disabled = nextChange.disabled = true;
   const wrap = document.createElement("input");
   wrap.type = "checkbox";
+  wrap.setAttribute("aria-label", "Wrap lines");
   wrap.checked = overflow === "wrap";
   const wrapLabel = document.createElement("label");
-  wrapLabel.style.cssText = "display:flex;align-items:center;gap:5px";
-  wrapLabel.append(wrap, "Wrap lines");
+  wrapLabel.style.cssText =
+    "display:flex;align-items:center;gap:4px;white-space:nowrap;flex-shrink:0";
+  wrapLabel.append(wrap, "Wrap");
   wrap.addEventListener("change", () => {
     overflow = wrap.checked ? "wrap" : "scroll";
     viewer.setOptions({ ...options, diffStyle, overflow });
@@ -181,14 +233,15 @@ export async function mountReview(host: HTMLElement, bridge: Bridge): Promise<()
   search.value = restored.filter;
   search.placeholder = "Filter files…";
   search.setAttribute("aria-label", "Filter changed files");
-  search.style.cssText = `font:inherit;color:${bridge.colors.foreground};background:${bridge.colors.surface1};border:1px solid ${bridge.colors.border};border-radius:5px;padding:5px 8px;min-width:120px`;
+  search.style.cssText = `font:inherit;color:${bridge.colors.foreground};background:${bridge.colors.surface1};border:1px solid ${bridge.colors.border};border-radius:5px;padding:5px 8px;min-width:120px;max-width:240px;flex:1 1 160px;height:30px;box-sizing:border-box`;
   search.addEventListener("input", () => render());
   const unviewed = document.createElement("input");
   unviewed.type = "checkbox";
+  unviewed.setAttribute("aria-label", "Unviewed only");
   unviewed.checked = restored.unviewedOnly;
   const unviewedLabel = document.createElement("label");
-  unviewedLabel.style.cssText = "display:flex;align-items:center;gap:5px";
-  unviewedLabel.append(unviewed, "Unviewed only");
+  unviewedLabel.style.cssText = wrapLabel.style.cssText;
+  unviewedLabel.append(unviewed, "Unviewed");
   unviewed.addEventListener("change", () => render());
   const help = document.createElement("div");
   help.hidden = true;
@@ -208,33 +261,35 @@ export async function mountReview(host: HTMLElement, bridge: Bridge): Promise<()
     shortcuts.setAttribute("aria-expanded", String(!help.hidden));
     root.focus({ preventScroll: true });
   });
+  setButtonIcon(shortcuts, "keyboard", "Shortcuts");
   shortcuts.setAttribute("aria-expanded", "false");
   help.append(helpText, helpTable);
-  root.insertBefore(help, status);
+  root.insertBefore(help, body);
   search.addEventListener("keydown", (event) => {
     if (event.key !== "Escape" || event.isComposing) return;
     event.preventDefault();
     event.stopPropagation();
     root.focus({ preventScroll: true });
   });
-  toolbar.append(
+  primaryRow.append(
     progress,
     scope,
     base,
     refresh,
     layout,
+    toggleTree,
     collapseAll,
     expandAll,
-    wrapLabel,
-    search,
-    unviewedLabel,
+    previousChange,
+    nextChange,
     shortcuts,
   );
+  secondaryRow.append(search, wrapLabel, unviewedLabel);
   const comments = createCommentUI({
     ...bridge,
     state: commentState,
     onChange: persist,
-    container: root,
+    container: secondaryRow,
     button,
     snapshot: () => snapshot,
     editing: () => draft !== undefined,
@@ -252,8 +307,7 @@ export async function mountReview(host: HTMLElement, bridge: Bridge): Promise<()
     },
     message,
   });
-  // Keep feedback controls above the scrolling file area.
-  root.append(status, body);
+  secondaryRow.append(status);
 
   function toggleFile(path: string) {
     const file = snapshot?.files.find((file) => file.path === path);
@@ -385,6 +439,52 @@ export async function mountReview(host: HTMLElement, bridge: Bridge): Promise<()
     viewer.scrollTo({ type: "line", id: path, ...line, align: "nearest", behavior: "instant" });
   }
 
+  function moveChange(direction: -1 | 1) {
+    if (disposed || busy || draft !== undefined) return;
+    const path = currentPath();
+    const selection = viewer.getSelectedLines();
+    const rendered = viewer.getRenderedItems().find((item) => item.id === path);
+    const anchor =
+      path && !collapsed.has(path) && rendered?.type === "diff"
+        ? rendered.instance.getNumericScrollAnchor(
+            viewer.getScrollTop() - (viewer.getTopForItem(path) ?? 0),
+          )
+        : undefined;
+    const selected = path !== undefined && selection?.id === path && !collapsed.has(path);
+    const line = selected
+      ? { lineNumber: selection.range.start, side: selection.range.side }
+      : anchor && { lineNumber: anchor.lineNumber, side: anchor.side };
+    const target = nextReviewChange(
+      visiblePaths.map((id) => {
+        const item = items.get(id);
+        return { id, fileDiff: item?.type === "diff" ? item.fileDiff : undefined };
+      }),
+      path ? { id: path, line, inclusive: !selected } : undefined,
+      direction,
+    );
+    if (!target) {
+      message(
+        direction === 1
+          ? "No next change in the filtered files."
+          : "No previous change in the filtered files.",
+      );
+      root.focus({ preventScroll: true });
+      return;
+    }
+    activePath = target.id;
+    if (collapsed.delete(target.id)) updateFile(target.id);
+    viewer.setSelectedLines({
+      id: target.id,
+      range: { start: target.lineNumber, end: target.lineNumber, side: target.side },
+    });
+    viewer.scrollTo({ type: "line", ...target, align: "center", behavior: "instant" });
+    message(
+      `${target.id}: ${target.side === "deletions" ? "old" : "new"} line ${target.lineNumber}`,
+    );
+    root.focus({ preventScroll: true });
+    persist();
+  }
+
   function addComment(path: string, side: "old" | "new", line: number) {
     const file = snapshot?.files.find((file) => file.path === path);
     const item = items.get(path);
@@ -432,6 +532,10 @@ export async function mountReview(host: HTMLElement, bridge: Bridge): Promise<()
       return;
     }
     if (busy) return;
+    if (key === "[" || key === "]") {
+      moveChange(key === "]" ? 1 : -1);
+      return;
+    }
     const path = currentPath();
     if (!path) return;
     activePath = path;
@@ -773,6 +877,7 @@ export async function mountReview(host: HTMLElement, bridge: Bridge): Promise<()
         overflow,
         filter: search.value,
         unviewedOnly: unviewed.checked,
+        fileTreeVisible: !tree.hidden,
         collapsed: [...collapsed],
         viewedVersions: snapshot ? viewedFileVersions(snapshot) : {},
         activePath: activePath ?? null,
@@ -973,6 +1078,7 @@ export async function mountReview(host: HTMLElement, bridge: Bridge): Promise<()
           return { ...item };
         }),
     );
+    updateScopeControls();
     persist();
   }
 

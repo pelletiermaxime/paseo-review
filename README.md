@@ -12,6 +12,10 @@ Complete original/current text is loaded before editing. Renames of supported te
 
 Viewed markers live in `$PASEO_HOME/plugin-data/workspace-review/viewed.json` (default `~/.paseo`). Each marker belongs to a workspace, repository, comparison, path, and exact content/mode fingerprint. A different file changing does not reset it. Checking Viewed acknowledges the displayed snapshot, even if an agent has since changed the disk file. Once the marker is saved, the file diff collapses and the view scrolls back to that same file's header. Other files keep their current collapse state. If Unviewed only or a filename filter hides the file, there is no explicit navigation to another file. Unchecking Viewed expands that file without scrolling. An active edit draft is retained through this collapse.
 
+Click **Hide file tree** in the toolbar to give the diff the full panel width. Click **Show file tree** to restore the sidebar. This preference persists per review tab; filters, file navigation and drafts remain available while the tree is hidden.
+
+The review toolbar uses two compact rows. Hover an icon for its action name; each action also has an accessible label. Search, filters and feedback share the second row. The comments icon shows the number of local comments and opens their list in a popover. Status messages appear inline when needed, with the full message available on hover. On narrow panels, each row scrolls horizontally instead of wrapping into extra rows.
+
 Click a file's name or header background to collapse or expand its diff, including when the header is pinned while scrolling. Collapsing keeps the current scroll position when the file header is already in the viewport. If you have scrolled past its original position and are using the pinned header, collapse returns to that file's header so it stays accessible. This also applies to the arrow, Collapse button and z shortcut. The arrow beside the filename is also a keyboard-focusable toggle with an announced expanded state. Viewed, Edit, Save, Cancel and other header controls keep their own actions. Header collapse preserves drafts and never saves them.
 
 Viewed files start collapsed when the panel opens. Returning to an already open review tab refreshes its snapshot and collapses Viewed files again; an active edit keeps its existing snapshot and draft. Refresh applies the same collapse default. You can expand them while reviewing; unviewed files retain their current open/collapsed state when returning to the tab. Edit and comment drafts remain intact.
@@ -30,12 +34,15 @@ Click the diff or focus the review panel to use its keyboard shortcuts:
 | `r`       | Toggle Viewed; marking Viewed collapses and returns to that file header |
 | `z`       | Collapse / expand the current file                                      |
 | `j` / `k` | Move the highlighted line down / up within the current diff             |
+| `]` / `[` | Jump to the next / previous change across filtered files                |
 | `c`       | Open a comment on the highlighted line                                  |
 | `/`       | Focus the file filter                                                   |
 | `h`       | Show / hide the shortcut help                                           |
 | `Escape`  | Return from the filter to the diff, or close the shortcut help          |
 
 Line navigation follows unified diff order in either layout, including removed lines before added lines, and skips unchanged gaps between hunks. Click an expanded context line number to comment there. File navigation stops at the first/last filtered file. Scrolling with the mouse or touch clears the line cursor so navigation starts near the visible position. Review shortcuts ignore text fields, comment boxes, selectors, composition and modifier chords, and pause while a file edit is active. The **Shortcuts** button also opens the help. Paseo reserves `?` for its own app-wide shortcut dialog, so this panel uses `h`.
+
+Use **Next change** / **Previous change** or `]` / `[` to jump between contiguous changed blocks, including across files. Each replacement is one stop on its first removed line; additions start on their first added line. Navigation follows the file filter and **Unviewed only**, expands a collapsed target, and highlights a line that can be commented on with `c`. It skips unavailable diffs, pure renames and files with no changed lines, stops at either end, and pauses while editing. After manual scrolling, the next jump starts near the visible position.
 
 Comments survive collapse, filtering, virtualization and panel remounts, including unfinished text. Each tab persists its own unfinished text across app reloads and restarts, independently of other review tabs. Failed sends keep the comments; only an acknowledged batch is cleared. Refreshing a changed file marks its comments stale and blocks sending until they are reviewed and recreated. The local comments list retains their text even if the file disappears from the diff. Save or Cancel active file edits before adding comments to that file or sending feedback. Comment creation and refresh never send messages automatically.
 
