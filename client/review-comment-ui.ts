@@ -44,12 +44,12 @@ export function createCommentUI(options: CommentUIOptions) {
   const actions = document.createElement("div");
   actions.style.cssText = "display:flex;align-items:center;gap:6px;min-width:0";
   const recipient = document.createElement("select");
-  recipient.setAttribute("aria-label", "Send feedback to agent");
+  recipient.setAttribute("aria-label", "Add feedback to agent chat");
   recipient.style.cssText = `font:inherit;width:clamp(120px,18vw,240px);min-width:0;height:30px;box-sizing:border-box;color:${options.colors.foreground};background:${options.colors.surface1};padding:5px;border:1px solid ${options.colors.border};border-radius:5px`;
   recipient.addEventListener("change", refresh);
   const reload = button("Refresh agents", () => void loadAgents());
   setButtonIcon(reload, "refresh", "Refresh agents");
-  const send = button("Send feedback", () => void submit());
+  const send = button("Add to chat", () => void submit());
   const details = document.createElement("section");
   details.popover = "auto";
   details.id = `review-comments-${crypto.randomUUID()}`;
@@ -84,7 +84,7 @@ export function createCommentUI(options: CommentUIOptions) {
     setButtonIcon(
       send,
       "send",
-      state.sending ? "Sending feedback…" : `Send feedback (${state.drafts.length})`,
+      state.sending ? "Adding to chat…" : `Add to chat (${state.drafts.length})`,
       state.drafts.length || undefined,
     );
     send.disabled =
@@ -97,12 +97,12 @@ export function createCommentUI(options: CommentUIOptions) {
     reload.disabled = loading || state.sending;
     recipient.disabled = loading || state.sending;
     const hint = options.editing()
-      ? "Save or Cancel file edits before sending feedback."
+      ? "Save or Cancel file edits before adding feedback to chat."
       : snapshot && state.drafts.some((draft) => !commentIsCurrent(draft, snapshot))
         ? "Commented files changed. Open local comments to review and recreate them."
         : state.drafts.some((draft) => draft.editing)
-          ? "Finish or Cancel your inline comment drafts before sending."
-          : "Send these comments as a code review. Running agents receive steering feedback.";
+          ? "Finish or Cancel your inline comment drafts before adding them to chat."
+          : "Add these comments to the selected agent's draft. Edit them in chat before sending.";
     send.title = hint;
     summary.textContent = `${state.drafts.length} local comment${state.drafts.length === 1 ? "" : "s"}`;
     setButtonIcon(showComments, "comments", summary.textContent, state.drafts.length);
@@ -165,11 +165,11 @@ export function createCommentUI(options: CommentUIOptions) {
     const snapshot = options.snapshot();
     if (state.sending) return;
     if (options.editing()) {
-      options.message("Save or Cancel file edits before sending feedback.");
+      options.message("Save or Cancel file edits before adding feedback to chat.");
       return;
     }
     if (!snapshot || !recipient.value) {
-      options.message("Choose an available agent in Review feedback before sending.");
+      options.message("Choose an available agent in Review feedback before adding to chat.");
       return;
     }
     const agentId = recipient.value;
@@ -185,11 +185,11 @@ export function createCommentUI(options: CommentUIOptions) {
       for (const path of paths) options.update(path);
       const count = await pending;
       options.message(
-        `Sent ${count} review comment${count === 1 ? "" : "s"} to the selected agent.`,
+        `Added ${count} review comment${count === 1 ? "" : "s"} to the chat draft. Edit and send from chat.`,
       );
     } catch (error) {
       options.message(
-        `Could not confirm feedback was sent. Comments kept. ${error instanceof Error ? error.message : String(error)}`,
+        `Could not add feedback to chat. Comments kept. ${error instanceof Error ? error.message : String(error)}`,
       );
     } finally {
       refresh();
@@ -270,7 +270,7 @@ export function createCommentUI(options: CommentUIOptions) {
       cancel.disabled = state.sending;
       const hint = document.createElement("div");
       hint.textContent =
-        "Enter to add comment · Ctrl+Enter / Cmd+Enter to send to chat · Shift+Enter for a new line";
+        "Enter to add comment · Ctrl+Enter / Cmd+Enter to add to chat draft · Shift+Enter for a new line";
       hint.style.cssText = "font-size:11px;margin-top:6px";
       card.append(input, add, cancel, hint);
       if (focusId === id) {

@@ -1,12 +1,19 @@
-import type { PluginWorkspacePanelProps } from "@getpaseo/plugin/client";
+import type { PluginClientContext, PluginWorkspacePanelProps } from "@getpaseo/plugin/client";
 import { usePaseo, useRpc, useTabState } from "@getpaseo/plugin/client";
 import { useEffect, useRef, useState } from "react";
 import { Platform, Text, View } from "react-native";
 import { openEditorRpc, saveRpc, snapshotRpc, viewedRpc } from "../shared/review";
 import { defaultReviewTabState, reviewHasDrafts, reviewTabSchema } from "./review-state";
-import { listFeedbackAgents, sendFeedback } from "./review-comments";
+import { listFeedbackAgents, prepareFeedback } from "./review-comments";
 
-export function ReviewPanel({ theme, layout, workspaceId, host, tab }: PluginWorkspacePanelProps) {
+export function ReviewPanel({
+  theme,
+  layout,
+  workspaceId,
+  host,
+  tab,
+  composers,
+}: PluginWorkspacePanelProps & Pick<PluginClientContext, "composers">) {
   const container = useRef<View>(null);
   const [error, setError] = useState<string>();
   const snapshot = useRpc(snapshotRpc);
@@ -19,6 +26,8 @@ export function ReviewPanel({ theme, layout, workspaceId, host, tab }: PluginWor
   initialState.current = state;
   const callbacks = useRef({ snapshot, viewed, save, openEditor, theme, paseo, setState, tab });
   callbacks.current = { snapshot, viewed, save, openEditor, theme, paseo, setState, tab };
+  const composerCallbacks = useRef(composers);
+  composerCallbacks.current = composers;
   const modified = reviewHasDrafts(state);
   useEffect(() => tab.setModified(modified), [tab, modified]);
 
@@ -50,7 +59,13 @@ export function ReviewPanel({ theme, layout, workspaceId, host, tab }: PluginWor
             callbacks.current.openEditor({ workspaceId, snapshotId, path }),
           agents: () => listFeedbackAgents(callbacks.current.paseo, workspaceId),
           send: (agentId, attachment) =>
-            sendFeedback(callbacks.current.paseo, workspaceId, agentId, attachment),
+            prepareFeedback(
+              callbacks.current.paseo,
+              composerCallbacks.current,
+              workspaceId,
+              agentId,
+              attachment,
+            ),
         });
         if (disposed) cleanup();
       })

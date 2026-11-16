@@ -29,12 +29,11 @@
     "test": "vp test run"
   },
   "dependencies": {
-    "@pierre/diffs": "1.6.1"
+    "@pierre/diffs": "1.6.4"
   },
   "devDependencies": {
-    "@getpaseo/client": "0.13.0",
-    "@getpaseo/plugin": "0.13.0",
-    "@tanstack/react-query": "^5.90.11",
+    "@getpaseo/client": "0.16.0",
+    "@getpaseo/plugin": "0.16.0",
     "@types/node": "^22.20.5",
     "@types/react": "~19.2.0",
     "react": "19.1.0",

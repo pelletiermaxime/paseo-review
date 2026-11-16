@@ -15,7 +15,9 @@ export default function contribute(client: PluginClientContext) {
     icon: "GitCompareArrows",
     context: "workspace",
     locations: ["workspace"],
-    Component: ReviewPanel,
+    Component: (props) => (
+      <ReviewPanel {...props} composers={(selector) => client.composers(selector)} />
+    ),
   });
   const removeCommand = client.addCommandCenterItem({
     id: "open-review",

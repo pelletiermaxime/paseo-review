@@ -1,13 +1,14 @@
 import { expect, it, vi } from "vite-plus/test";
 import { parseDiffFromFile } from "@pierre/diffs";
 import type { PaseoApi } from "@getpaseo/client";
+import type { PluginComposer } from "@getpaseo/plugin/client";
 import type { ReviewSnapshot } from "../shared/review";
 import {
   commentIsCurrent,
   deliverComments,
   lineComment,
   listFeedbackAgents,
-  sendFeedback,
+  prepareFeedback,
   type CommentDraft,
   type CommentState,
   type ReviewAttachment,
@@ -135,7 +136,7 @@ it("handles added/deleted files, no final newline, distant hunks and expanded un
   expect(lineComment(large, "large", "old", 100).context.targetLine.newLineNumber).toBe(101);
 });
 
-it("sends Paseo's structured review attachment and clears only the acknowledged batch", async () => {
+it("captures review context and clears only the batch added to chat", async () => {
   const state: CommentState = { drafts: [draft()], sending: false };
   let release!: () => void;
   const send = vi.fn(
@@ -163,7 +164,7 @@ it("sends Paseo's structured review attachment and clears only the acknowledged 
   expect(state.sending).toBe(false);
 });
 
-it("retains drafts on send failure and blocks unfinished or changed-file comments", async () => {
+it("retains drafts on handoff failure and blocks unfinished or changed-file comments", async () => {
   const state: CommentState = { drafts: [draft()], sending: false };
   const failure = vi.fn().mockRejectedValue(new Error("offline"));
   await expect(deliverComments(state, snapshot, failure)).rejects.toThrow("offline");
@@ -181,7 +182,7 @@ it("retains drafts on send failure and blocks unfinished or changed-file comment
   expect(send).not.toHaveBeenCalled();
 });
 
-it("sends only the selected comment while preserving other pending and unfinished comments", async () => {
+it("hands off only the selected comment while preserving other pending and unfinished comments", async () => {
   const current = draft("current");
   const pending = draft("pending");
   const unfinished = { ...draft("unfinished"), editing: true, input: "Still writing" };
@@ -230,7 +231,7 @@ it("lists every page and offers only live agents in the current workspace", asyn
   expect(list.mock.calls[1]![0].page.cursor).toBe("next");
 });
 
-it("sends readable comments with unchanged review context, revalidates the recipient and uses steering", async () => {
+it("appends a compact comment batch to the latest draft without sending", async () => {
   const agent = {
     workspaceId: "workspace",
     archivedAt: null,
@@ -253,21 +254,62 @@ it("sends readable comments with unchanged review context, revalidates the recip
     ],
   };
   const original = structuredClone(attachment);
-  await sendFeedback(paseo, "workspace", "chosen", attachment);
-  expect(agent.send).toHaveBeenCalledWith(
-    "Please address this code review.\n\n" +
-      "1. example.ts (new line 3)\nPlease explain this change.\n\n" +
-      "2. folder with spaces/example.ts (old line 2)\nKeep this behavior.\nIt is still needed for older clients.",
-    { attachments: [original], activeTurnBehavior: "steer" },
+  const setPrompt = vi.fn();
+  const focus = vi.fn().mockResolvedValue(undefined);
+  const composer = { prompt: "Existing draft", focus, setPrompt } as unknown as PluginComposer;
+  const composers = vi
+    .fn()
+    .mockReturnValueOnce([composer])
+    .mockReturnValue([{ ...composer, prompt: "Existing draft plus text typed during navigation" }]);
+  await prepareFeedback(paseo, composers, "workspace", "chosen", attachment);
+  expect(composers).toHaveBeenCalledWith({ agentId: "chosen" });
+  expect(focus).toHaveBeenCalledOnce();
+  const text = setPrompt.mock.calls[0]![0];
+  expect(text).toBe(
+    "Existing draft plus text typed during navigation\n\nReview feedback:\n\n" +
+      "1. example.ts:3 (new)\nPlease explain this change.\n\n" +
+      "2. folder with spaces/example.ts:2 (old)\nKeep this behavior.\nIt is still needed for older clients.",
   );
   expect(attachment).toEqual(original);
-  agent.send.mockClear();
+  expect(agent.send).not.toHaveBeenCalled();
+  setPrompt.mockClear();
   agent.workspaceId = "another-workspace";
-  await expect(sendFeedback(paseo, "workspace", "chosen", attachment)).rejects.toThrow(
-    "this workspace",
-  );
+  await expect(
+    prepareFeedback(paseo, composers, "workspace", "chosen", attachment),
+  ).rejects.toThrow("this workspace");
   expect(agent.send).not.toHaveBeenCalled();
   agent.workspaceId = "workspace";
   agent.status = "closed";
-  await expect(sendFeedback(paseo, "workspace", "chosen", attachment)).rejects.toThrow("available");
+  await expect(
+    prepareFeedback(paseo, composers, "workspace", "chosen", attachment),
+  ).rejects.toThrow("available");
+  expect(setPrompt).not.toHaveBeenCalled();
+});
+
+it("keeps local comments and the chat draft when the composer is unavailable or cannot focus", async () => {
+  const agent = { workspaceId: "workspace", refresh: vi.fn().mockResolvedValue({}) };
+  const paseo = { agents: { ref: () => agent } } as unknown as PaseoApi;
+  const setPrompt = vi.fn();
+  const focus = vi
+    .fn()
+    .mockRejectedValueOnce(new Error("Could not focus chat"))
+    .mockResolvedValue(undefined);
+  const composer = { prompt: "", focus, setPrompt } as unknown as PluginComposer;
+  const composers = vi.fn().mockReturnValue([]);
+  const state: CommentState = { drafts: [draft()], sending: false };
+  const handoff = () =>
+    deliverComments(state, snapshot, (attachment) =>
+      prepareFeedback(paseo, composers, "workspace", "chosen", attachment),
+    );
+  await expect(handoff()).rejects.toThrow("unavailable");
+  composers.mockReturnValue([composer]);
+  await expect(handoff()).rejects.toThrow("Could not focus chat");
+  expect(setPrompt).not.toHaveBeenCalled();
+  expect(state.drafts).toEqual([draft()]);
+  expect(state.sending).toBe(false);
+  await expect(handoff()).resolves.toBe(1);
+  expect(setPrompt).toHaveBeenCalledWith(
+    "Review feedback:\n\n1. example.ts:3 (new)\nPlease explain this change.",
+  );
+  expect(state.drafts).toEqual([]);
 });

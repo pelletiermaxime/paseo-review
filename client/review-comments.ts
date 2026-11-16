@@ -1,4 +1,5 @@
 import type { PaseoApi, PaseoAgentSendOptions } from "@getpaseo/client";
+import type { PluginClientContext } from "@getpaseo/plugin/client";
 import type { FileDiffMetadata } from "@pierre/diffs";
 import type { ReviewSnapshot } from "../shared/review";
 
@@ -113,8 +114,9 @@ export async function listFeedbackAgents(
   return [...agents.values()];
 }
 
-export async function sendFeedback(
+export async function prepareFeedback(
   paseo: Pick<PaseoApi, "agents">,
+  composers: PluginClientContext["composers"],
   workspaceId: string,
   agentId: string,
   attachment: ReviewAttachment,
@@ -128,18 +130,20 @@ export async function sendFeedback(
     agent.status === "closed"
   )
     throw new Error("Choose an available agent in this workspace, then try again.");
-  // Paseo delivers review attachments to the agent but doesn't display them in this chat flow.
+  const [target] = composers({ agentId });
+  if (!target) throw new Error("The selected agent's chat is unavailable.");
+  // Reveal the input before changing it: failed navigation leaves both drafts untouched.
+  await target.focus();
+  const [composer] = composers({ agentId });
+  if (!composer) throw new Error("The selected agent's chat is unavailable.");
   const text = [
-    "Please address this code review.",
+    "Review feedback:",
     ...attachment.comments.map(
       (comment, index) =>
-        `${index + 1}. ${comment.filePath} (${comment.side} line ${comment.lineNumber})\n${comment.body}`,
+        `${index + 1}. ${comment.filePath}:${comment.lineNumber} (${comment.side})\n${comment.body}`,
     ),
   ].join("\n\n");
-  await agent.send(text, {
-    attachments: [attachment],
-    activeTurnBehavior: "steer",
-  });
+  composer.setPrompt(`${composer.prompt}${composer.prompt ? "\n\n" : ""}${text}`);
 }
 
 /** Clear only the captured batch after acknowledgement; errors preserve every draft. */
@@ -149,13 +153,13 @@ export async function deliverComments(
   send: (attachment: ReviewAttachment) => Promise<void>,
   drafts: readonly CommentDraft[] = state.drafts,
 ): Promise<number> {
-  if (state.sending) throw new Error("Feedback is already being sent.");
+  if (state.sending) throw new Error("Feedback is already being added to chat.");
   if (!drafts.length) throw new Error("Add a line comment first.");
   if (drafts.some((draft) => draft.editing || !draft.comment.body.trim()))
-    throw new Error("Finish or cancel your comment drafts before sending.");
+    throw new Error("Finish or cancel your comment drafts before adding them to chat.");
   if (drafts.some((draft) => !commentIsCurrent(draft, snapshot)))
     throw new Error(
-      "Some commented files changed. Review and recreate those comments before sending.",
+      "Some commented files changed. Review and recreate those comments before adding them to chat.",
     );
   const batch = [...drafts];
   state.sending = true;

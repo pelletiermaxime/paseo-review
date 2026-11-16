@@ -4,7 +4,7 @@ Render readable diffs with default dark/light themes, main-thread highlighting a
 
 ## Sub-features
 
-- `render-theme`: Host dark/light variants and bundled language support.
+- `render-theme`: Readability in host dark/light variants.
 - `render-collapse`: Highlighting and responsiveness when collapsing large files.
 - `render-cleanup`: Renderer lifetime follows the mounted panel.
 - `render-native`: Browser guard and native fallback.
@@ -21,13 +21,12 @@ Preconditions: [common fixture](../verification.md), including `scratch/many.ts`
 - **Highlighting.** Expose a new code file, wait for colors, scroll it out of the rendered set/back, then collapse a preceding large file. Require correct colors and responsive controls; old benchmark timings are not a pass threshold.
 - **Unavailable content.** Oversized/binary entries show ordinary cards and never become file/diff renderer items. Refresh, filter, mark Viewed and scroll repeatedly; require no `VirtualizedFile.render` layout error, no invented line counts and no way to expand their content. Repeat with only unavailable files visible.
 - **Main thread.** Require no panel-owned worker. With several large files open, collapse a file near the top and observe how promptly following files reposition and retain syntax colors.
-- **Assets.** Run `vp run test` for highlighting checks. Observe host rendering requests and flag unexpected grammar/theme/WASM downloads.
+- **Assets.** Observe host rendering requests and flag unexpected grammar/theme/WASM downloads.
 - **Native.** On an actual iOS/Android client, require the desktop/web fallback and no browser-renderer initialization. If only a DOM-free simulation is available, report it as such; static checks do not prove physical-device behavior.
 
 ## Gotchas
 
 - Colors can arrive after initial rendering.
-- Highlights bundles its own lexers. Unsupported/custom languages render as plain text; check the languages used by the reviewed project after upgrades.
 - Check collapsing through the actual panel; highlighting throughput alone does not measure collapse responsiveness.
 - The editor is beta; upgrades require host rendering/editing checks.
 - Do not alter origin/security settings for a probe.
